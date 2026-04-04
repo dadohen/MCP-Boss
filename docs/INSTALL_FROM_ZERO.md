@@ -241,6 +241,80 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 | `logging.viewer` | "You can read audit logs, but you can't delete them" |
 | `aiplatform.user` | "You can ask Gemini questions, but you can't deploy models" |
 
+### Give Cloud Build permission to build and push containers:
+
+When you build your container in Step 7, Google uses a special "Cloud Build service account" to do the work. This account needs permission to store the finished container image and write build logs. Without these, the build will succeed but then fail when trying to save the result.
+
+First, find your project number (it's different from your project ID):
+
+```bash
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
+```
+
+Now grant the Cloud Build service account the permissions it needs:
+
+```bash
+# Permission to store the built container image
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+    --role="roles/storage.admin" --quiet
+
+# Permission to push the container to the registry
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+    --role="roles/artifactregistry.writer" --quiet
+
+# Permission to write build logs
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+    --role="roles/logging.logWriter" --quiet
+```
+
+**What each permission does:**
+
+| Permission | English Translation |
+|---|---|
+| `storage.admin` | "Cloud Build can store and retrieve files in Cloud Storage (where your code gets uploaded before building)" |
+| `artifactregistry.writer` | "Cloud Build can push the finished Docker container image to the container registry" |
+| `logging.logWriter` | "Cloud Build can write its build logs so you can see what happened" |
+
+**Why is this a separate step?** Google Cloud projects created through different methods (console, org admin, API) have different default permissions. Some projects grant these automatically, others don't. Running these commands guarantees they're set correctly regardless of how your project was created.
+
+### Give yourself permission to trigger builds:
+
+Your own user account also needs permission to start builds and access storage:
+
+```bash
+MY_EMAIL=$(gcloud config get-value account)
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="user:${MY_EMAIL}" \
+    --role="roles/cloudbuild.builds.editor" --quiet
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="user:${MY_EMAIL}" \
+    --role="roles/storage.admin" --quiet
+```
+
+**Not sure what email you're logged in as?** Run:
+```bash
+gcloud auth list
+```
+The account with the asterisk (*) next to it is your active account.
+
+### Give yourself permission to use the service account:
+
+When you deploy to Cloud Run in Step 8, you tell Cloud Run to use the service account you just created. Google needs to verify that YOU are allowed to assign that service account to a service. Without this, the deploy command will fail with "Permission 'iam.serviceaccounts.actAs' denied."
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+    native-mcp-sa@${PROJECT_ID}.iam.gserviceaccount.com \
+    --member="user:${MY_EMAIL}" \
+    --role="roles/iam.serviceAccountUser"
+```
+
+**What this does:** It says "this user is allowed to deploy services that run as this service account." It's a security control — Google doesn't let just anyone assign service accounts to running services.
+
 ---
 
 ## Step 5: Add Your VirusTotal API Key (Optional But Recommended)
@@ -305,10 +379,26 @@ Your MCP server needs to know which SecOps instance to connect to. That's identi
 
 This is where Google takes your code and packages it into a Docker container. **This happens in Google's cloud — you don't need Docker installed on your computer.**
 
+First, create a container registry to store your built images:
+
 ```bash
 PROJECT_ID=$(gcloud config get-value project)
 
-gcloud builds submit --tag gcr.io/${PROJECT_ID}/google-native-mcp:latest
+gcloud artifacts repositories create mcp-server \
+    --repository-format=docker \
+    --location=us-central1 \
+    --project=${PROJECT_ID} \
+    --description="MCP Server container images"
+```
+
+**What this does:** Creates a place in Google Cloud to store your Docker container images. Think of it as a private folder for your server's code packages.
+
+**If you see "already exists":** That's fine. It was created before. Keep going.
+
+Now build the container:
+
+```bash
+gcloud builds submit --tag us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest
 ```
 
 **What happens:**
@@ -323,6 +413,10 @@ DONE
 ```
 
 **If you see an error about "Cloud Build API":** Go back to Step 3 and make sure you enabled `cloudbuild.googleapis.com`.
+
+**If you see "permission denied" or "storage.objects.get" error:** Go back to Step 4 and make sure you ran the Cloud Build service account permission commands.
+
+**If you see "repo does not exist" or "createOnPush" error:** You missed the `gcloud artifacts repositories create` command above. Run it first, then retry the build.
 
 **If you see a Python error about "mcp" or "requirements":** The `requirements.txt` file might be out of date. This shouldn't happen with the latest code, but if it does, let me know.
 
@@ -339,7 +433,7 @@ SECOPS_CUSTOMER_ID="PASTE_YOUR_CUSTOMER_ID_HERE"
 SECOPS_REGION="us"
 
 gcloud run deploy google-native-mcp \
-    --image gcr.io/${PROJECT_ID}/google-native-mcp:latest \
+    --image us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest \
     --region us-central1 \
     --service-account ${SA_EMAIL} \
     --no-allow-unauthenticated \
@@ -502,9 +596,9 @@ cd ~/Desktop/Google-Native-MCP-Server    # or wherever you downloaded it
 git pull                                   # get the latest code
 
 PROJECT_ID=$(gcloud config get-value project)
-gcloud builds submit --tag gcr.io/${PROJECT_ID}/google-native-mcp:latest
+gcloud builds submit --tag us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest
 gcloud run deploy google-native-mcp \
-    --image gcr.io/${PROJECT_ID}/google-native-mcp:latest \
+    --image us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest \
     --region us-central1
 ```
 
@@ -596,9 +690,10 @@ for ROLE in roles/chronicle.viewer roles/securitycenter.findingsViewer roles/log
     gcloud projects add-iam-policy-binding $PROJECT_ID --member="serviceAccount:${SA_EMAIL}" --role="$ROLE" --quiet
 done
 
-# Build + Deploy
-gcloud builds submit --tag gcr.io/${PROJECT_ID}/google-native-mcp:latest
-gcloud run deploy google-native-mcp --image gcr.io/${PROJECT_ID}/google-native-mcp:latest --region us-central1 --service-account ${SA_EMAIL} --no-allow-unauthenticated --memory 512Mi --set-env-vars="SECOPS_PROJECT_ID=${PROJECT_ID},SECOPS_CUSTOMER_ID=YOUR_CUSTOMER_ID,SECOPS_REGION=us" --quiet
+# Create container registry + Build + Deploy
+gcloud artifacts repositories create mcp-server --repository-format=docker --location=us-central1 --project=${PROJECT_ID} 2>/dev/null
+gcloud builds submit --tag us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest
+gcloud run deploy google-native-mcp --image us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest --region us-central1 --service-account ${SA_EMAIL} --no-allow-unauthenticated --memory 512Mi --set-env-vars="SECOPS_PROJECT_ID=${PROJECT_ID},SECOPS_CUSTOMER_ID=YOUR_CUSTOMER_ID,SECOPS_REGION=us" --quiet
 
 # Test
 SERVICE_URL=$(gcloud run services describe google-native-mcp --region us-central1 --format="value(status.url)")

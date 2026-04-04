@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google SecOps MCP Server</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            background: #111;
+            border-bottom: 1px solid #333;
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        header h1 {
+            font-size: 16px;
+            color: #4ade80;
+            font-weight: 600;
+        }
+        header .status {
+            font-size: 12px;
+            color: #888;
+        }
+        header .status.connected { color: #4ade80; }
+        #chat {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+        .message {
+            margin-bottom: 16px;
+            max-width: 900px;
+        }
+        .message .role {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .message .role.user { color: #60a5fa; }
+        .message .role.assistant { color: #4ade80; }
+        .message .role.tool { color: #f59e0b; }
+        .message .role.error { color: #ef4444; }
+        .message .content {
+            background: #161616;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .message .content.tool-result {
+            background: #0d1117;
+            border-color: #f59e0b33;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        #input-area {
+            background: #111;
+            border-top: 1px solid #333;
+            padding: 16px 24px;
+            display: flex;
+            gap: 12px;
+        }
+        #input-area input {
+            flex: 1;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: #e0e0e0;
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+        }
+        #input-area input:focus { border-color: #4ade80; }
+        #input-area input::placeholder { color: #555; }
+        #input-area button {
+            background: #4ade80;
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 24px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        #input-area button:hover { background: #22c55e; }
+        #input-area button:disabled { background: #333; color: #666; cursor: not-allowed; }
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .tool-card {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .tool-card:hover { border-color: #4ade80; }
+        .tool-card .name { color: #4ade80; font-weight: 600; }
+        .tool-card .desc { color: #888; margin-top: 2px; }
+        .spinner { display: inline-block; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🔒 Google SecOps MCP Server</h1>
+        <div class="status" id="status">Connecting...</div>
+    </header>
+
+    <div id="chat"></div>
+
+    <div id="input-area">
+        <input type="text" id="input" placeholder="Ask anything... (e.g., 'check SCC findings' or 'enrich IP 8.8.8.8')" autofocus />
+        <button id="send" onclick="sendMessage()">Send</button>
+    </div>
+
+    <script>
+        const chat = document.getElementById('chat');
+        const input = document.getElementById('input');
+        const sendBtn = document.getElementById('send');
+        const statusEl = document.getElementById('status');
+        let tools = [];
+
+        // Connect and get tools list
+        async function init() {
+            try {
+                const resp = await fetch('/health');
+                const health = await resp.json();
+                statusEl.textContent = `✅ ${health.tools} tools · ${health.project} · ${health.region}`;
+                statusEl.className = 'status connected';
+
+                // Get tool list via MCP
+                const toolResp = await fetch('/api/tools');
+                if (toolResp.ok) {
+                    tools = await toolResp.json();
+                    showWelcome();
+                }
+            } catch (e) {
+                statusEl.textContent = '❌ Connection failed';
+                addMessage('error', 'Failed to connect to MCP server: ' + e.message);
+            }
+        }
+
+        function showWelcome() {
+            let msg = `Connected to Google SecOps MCP Server\n\n`;
+            msg += `${tools.length} tools available. Try:\n`;
+            msg += `  • "check SCC findings for tito-436719"\n`;
+            msg += `  • "enrich IP 198.51.100.42"\n`;
+            msg += `  • "search SecOps for failed logins"\n`;
+            msg += `  • "list recent detections"\n`;
+            msg += `  • "tools" to see all available tools\n`;
+            addMessage('assistant', msg);
+        }
+
+        function addMessage(role, content) {
+            const div = document.createElement('div');
+            div.className = 'message';
+            div.innerHTML = `
+                <div class="role ${role}">${role}</div>
+                <div class="content ${role === 'tool' ? 'tool-result' : ''}">${escapeHtml(content)}</div>
+            `;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function sendMessage() {
+            const text = input.value.trim();
+            if (!text) return;
+
+            addMessage('user', text);
+            input.value = '';
+            sendBtn.disabled = true;
+            sendBtn.textContent = '⏳';
+
+            // Check for "tools" command
+            if (text.toLowerCase() === 'tools') {
+                let toolList = 'Available tools:\n\n';
+                tools.forEach(t => {
+                    toolList += `  ${t.name}\n    ${t.description || ''}\n\n`;
+                });
+                addMessage('assistant', toolList);
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send';
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text }),
+                });
+                const data = await resp.json();
+
+                if (data.tool_called) {
+                    addMessage('tool', `⚡ ${data.tool_called}(${JSON.stringify(data.tool_args)})\n\n${JSON.stringify(data.tool_result, null, 2)}`);
+                }
+                if (data.response) {
+                    addMessage('assistant', data.response);
+                }
+                if (data.error) {
+                    addMessage('error', data.error);
+                }
+            } catch (e) {
+                addMessage('error', 'Request failed: ' + e.message);
+            }
+
+            sendBtn.disabled = false;
+            sendBtn.textContent = 'Send';
+        }
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !sendBtn.disabled) sendMessage();
+        });
+
+        init();
+    </script>
+</body>
+</html>
