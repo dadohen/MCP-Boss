@@ -1269,10 +1269,10 @@ def search_malware_families(query: str, limit: int = 10) -> str:
 
 
 @app_mcp.tool()
-def top_vulnerability_findings(project_id: str, max_findings: int = 20) -> str:
+def top_vulnerability_findings(project_id: str = "", max_findings: int = 20) -> str:
     """Get top vulnerability findings from Security Command Center sorted by Attack Exposure Score. Returns findings with severity, category, resource, and remediation priority."""
     try:
-        project_id = validate_project_id(project_id)
+        project_id = validate_project_id(project_id or SECOPS_PROJECT_ID)
         max_findings = min(max(1, max_findings), 100)
         client = securitycenter.SecurityCenterClient()
         findings = client.list_findings(request={
@@ -1308,10 +1308,10 @@ def top_vulnerability_findings(project_id: str, max_findings: int = 20) -> str:
 
 
 @app_mcp.tool()
-def get_finding_remediation(project_id: str, finding_id: str) -> str:
+def get_finding_remediation(project_id: str = "", finding_id: str = "") -> str:
     """Get detailed remediation guidance for a specific SCC finding. Returns next steps, affected resource context, and Cloud Asset Inventory info if available."""
     try:
-        project_id = validate_project_id(project_id)
+        project_id = validate_project_id(project_id or SECOPS_PROJECT_ID)
         if not finding_id:
             return json.dumps({"error": "finding_id is required"})
         client = securitycenter.SecurityCenterClient()
