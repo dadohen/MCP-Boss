@@ -961,7 +961,7 @@ def search_security_events(text: str, hours_back: int = 24, max_events: int = 10
         gemini_url = (
             f"https://us-central1-aiplatform.googleapis.com/v1/"
             f"projects/{SECOPS_PROJECT_ID}/locations/us-central1/"
-            f"publishers/google/models/gemini-3.1-flash:generateContent"
+            f"publishers/google/models/gemini-2.5-flash:generateContent"
         )
         translate_prompt = (
             "You are a Google SecOps UDM query expert. Convert the following natural language "
@@ -2392,7 +2392,7 @@ async def api_chat(request: StarletteRequest):
         gemini_url = (
             f"https://us-central1-aiplatform.googleapis.com/v1/"
             f"projects/{SECOPS_PROJECT_ID}/locations/us-central1/"
-            f"publishers/google/models/gemini-3.1-flash:generateContent"
+            f"publishers/google/models/gemini-2.5-flash:generateContent"
         )
         headers_ai = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
