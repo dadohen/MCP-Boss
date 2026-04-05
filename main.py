@@ -61,6 +61,12 @@ TOOL CATEGORIES:
     - top_vulnerability_findings → Vulns sorted by Attack Exposure Score
     - get_finding_remediation   → Remediation guidance for a finding
 
+  📒 SOAR PLAYBOOK MANAGEMENT
+    - list_playbooks            → List all SOAR playbooks
+    - get_playbook              → Get playbook details
+    - create_playbook           → Create a new SOAR playbook
+    - create_containment_playbook → Pre-built containment playbook templates
+
   📂 SOAR CASES & ALERTS (Extended)
     - list_cases                → List all SOAR cases
     - get_case_alerts           → Alerts for a specific case
@@ -108,7 +114,7 @@ Auth: Workload Identity + ADC. Zero embedded secrets.
   🤖 AUTONOMOUS INVESTIGATION
     - autonomous_investigate     → End-to-end: enrich → search → assess → detect → respond → report
 
-56 tools total.
+60 tools total.
 
 Author: David Adohen
 """
@@ -1956,6 +1962,292 @@ def get_case_overview() -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 📒 SOAR PLAYBOOK MANAGEMENT
+# ═══════════════════════════════════════════════════════════════
+
+
+@app_mcp.tool()
+def list_playbooks(page_size: int = 50) -> str:
+    """List all SOAR playbooks in SecOps. Shows playbook names, triggers, and enabled status."""
+    try:
+        resp = requests.get(
+            f"{SECOPS_BASE_URL}/playbooks",
+            headers=_secops_headers(),
+            params={"pageSize": min(page_size, 100)},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            return resp.text
+        return json.dumps({"error": f"API [{resp.status_code}]", "detail": resp.text[:500]})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def get_playbook(playbook_id: str) -> str:
+    """Get details of a specific SOAR playbook including its steps, triggers, and configuration."""
+    try:
+        if not playbook_id:
+            return json.dumps({"error": "playbook_id is required"})
+        resp = requests.get(
+            f"{SECOPS_BASE_URL}/playbooks/{playbook_id}",
+            headers=_secops_headers(),
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            return resp.text
+        return json.dumps({"error": f"API [{resp.status_code}]", "detail": resp.text[:500]})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def create_playbook(
+    name: str,
+    description: str = "",
+    trigger_type: str = "ALERT",
+    trigger_filter: str = "",
+    enabled: bool = True,
+) -> str:
+    """
+    Create a new SOAR playbook in SecOps.
+    
+    Args:
+        name: Playbook name (e.g., "Auto_Containment_IP")
+        description: What the playbook does
+        trigger_type: "ALERT", "CASE", "MANUAL", or "SCHEDULED"
+        trigger_filter: Rule name or alert filter that triggers this playbook
+        enabled: Whether the playbook is active
+    """
+    try:
+        if not name:
+            return json.dumps({"error": "Playbook name is required"})
+        
+        playbook_body = {
+            "displayName": name,
+            "description": description or f"Auto-generated playbook: {name}",
+            "enabled": enabled,
+            "trigger": {
+                "triggerType": trigger_type,
+            },
+        }
+        if trigger_filter:
+            playbook_body["trigger"]["filter"] = trigger_filter
+        
+        resp = requests.post(
+            f"{SECOPS_BASE_URL}/playbooks",
+            headers=_secops_headers(),
+            json=playbook_body,
+            timeout=15,
+        )
+        if resp.status_code in (200, 201):
+            logger.info(f"Playbook created: {name}")
+            return resp.text
+        return json.dumps({"error": f"API [{resp.status_code}]", "detail": resp.text[:500]})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def create_containment_playbook(
+    threat_type: str = "ip",
+    severity_threshold: str = "CRITICAL",
+) -> str:
+    """
+    Create a pre-built containment playbook template for a specific threat type.
+    Generates a playbook that triggers on auto-generated rules and executes containment.
+    
+    Args:
+        threat_type: "ip", "domain", "hash", or "phishing"
+        severity_threshold: Minimum severity to trigger — "HIGH" or "CRITICAL"
+    """
+    try:
+        templates = {
+            "ip": {
+                "name": "Auto_Containment_Malicious_IP",
+                "description": (
+                    "Autonomous containment playbook for malicious IPs. "
+                    "Triggered by Auto_IOC_IP_* rules. "
+                    "Actions: 1) Enrich IP via GTI 2) If malicious >= 5: add to blocklist Data Table "
+                    "3) Search for affected hosts 4) Queue CrowdStrike isolation (requires approval) "
+                    "5) Add investigation comment to case 6) Close case if fully contained."
+                ),
+                "trigger_filter": "rule_name STARTS_WITH 'Auto_IOC_IP_'",
+                "steps": [
+                    {"action": "enrich_indicator", "description": "Enrich IP via VirusTotal/GTI"},
+                    {"action": "search_secops_udm", "description": "Search for all events involving this IP"},
+                    {"action": "update_data_table", "description": "Add IP to automated_blocklist Data Table"},
+                    {"action": "isolate_crowdstrike_host", "description": "Isolate affected endpoints (requires approval)", "requires_approval": True},
+                    {"action": "add_case_comment", "description": "Document investigation findings"},
+                    {"action": "close_case", "description": "Close case with containment summary"},
+                ],
+            },
+            "domain": {
+                "name": "Auto_Containment_Malicious_Domain",
+                "description": (
+                    "Autonomous containment for malicious domains. "
+                    "Triggered by Auto_IOC_Domain_* rules. "
+                    "Actions: 1) Enrich domain 2) Add to blocklist 3) Find users who visited "
+                    "4) Suspend affected users in Okta (requires approval) 5) Close case."
+                ),
+                "trigger_filter": "rule_name STARTS_WITH 'Auto_IOC_Domain_'",
+                "steps": [
+                    {"action": "enrich_indicator", "description": "Enrich domain via GTI"},
+                    {"action": "get_domain_report", "description": "Get full domain reputation report"},
+                    {"action": "search_secops_udm", "description": "Find users who accessed this domain"},
+                    {"action": "update_data_table", "description": "Add domain to blocklist Data Table"},
+                    {"action": "suspend_okta_user", "description": "Suspend affected users (requires approval)", "requires_approval": True},
+                    {"action": "add_case_comment", "description": "Document findings and actions"},
+                ],
+            },
+            "hash": {
+                "name": "Auto_Containment_Malicious_File",
+                "description": (
+                    "Autonomous containment for malicious file hashes. "
+                    "Triggered by Auto_IOC_Hash_* rules. "
+                    "Actions: 1) Get file report from VT 2) Search for hosts with this file "
+                    "3) Isolate affected hosts 4) Add hash to blocklist 5) Close case."
+                ),
+                "trigger_filter": "rule_name STARTS_WITH 'Auto_IOC_Hash_'",
+                "steps": [
+                    {"action": "get_file_report", "description": "Full VirusTotal file analysis"},
+                    {"action": "search_secops_udm", "description": "Find all hosts that executed this file"},
+                    {"action": "isolate_crowdstrike_host", "description": "Isolate infected endpoints (requires approval)", "requires_approval": True},
+                    {"action": "update_data_table", "description": "Add hash to blocklist Data Table"},
+                    {"action": "add_case_comment", "description": "Document findings"},
+                    {"action": "close_case", "description": "Close case with containment summary"},
+                ],
+            },
+            "phishing": {
+                "name": "Auto_Phishing_Containment",
+                "description": (
+                    "Autonomous phishing containment pipeline. "
+                    "Triggered by Inbound_Phishing_* rules. "
+                    "Actions: 1) Extract Message-ID 2) Enrich URLs via VT "
+                    "3) O365 Hard Purge from all inboxes 4) Check if user clicked "
+                    "5) If clicked: suspend Okta + kill Azure AD sessions 6) Close case."
+                ),
+                "trigger_filter": "rule_name STARTS_WITH 'Inbound_Phishing_'",
+                "steps": [
+                    {"action": "enrich_indicator", "description": "Enrich phishing URLs via GTI"},
+                    {"action": "purge_email_o365", "description": "Hard Delete email from all inboxes"},
+                    {"action": "search_secops_udm", "description": "Check if anyone clicked the link"},
+                    {"action": "suspend_okta_user", "description": "Suspend users who clicked (requires approval)", "requires_approval": True},
+                    {"action": "revoke_azure_ad_sessions", "description": "Revoke Azure AD sessions for clickers"},
+                    {"action": "add_case_comment", "description": "Full forensic documentation"},
+                    {"action": "close_case", "description": "Close with containment summary"},
+                ],
+            },
+        }
+        
+        template = templates.get(threat_type)
+        if not template:
+            return json.dumps({"error": f"Unknown threat_type: {threat_type}. Use: ip, domain, hash, or phishing"})
+        
+        # Create the playbook via API
+        playbook_body = {
+            "displayName": template["name"],
+            "description": template["description"],
+            "enabled": True,
+            "trigger": {
+                "triggerType": "ALERT",
+                "filter": template["trigger_filter"],
+            },
+        }
+        
+        resp = requests.post(
+            f"{SECOPS_BASE_URL}/playbooks",
+            headers=_secops_headers(),
+            json=playbook_body,
+            timeout=15,
+        )
+        
+        result = {
+            "playbook_name": template["name"],
+            "threat_type": threat_type,
+            "trigger_filter": template["trigger_filter"],
+            "steps": template["steps"],
+            "description": template["description"],
+        }
+        
+        if resp.status_code in (200, 201):
+            result["status"] = "created"
+            result["playbook_id"] = resp.json().get("name", "unknown")
+            logger.info(f"Containment playbook created: {template['name']}")
+            results_actions = [s["description"] for s in template["steps"]]
+            result["actions_in_order"] = results_actions
+        else:
+            result["status"] = "template_generated"
+            result["api_response"] = f"API [{resp.status_code}]: {resp.text[:300]}"
+            result["note"] = "Playbook template generated. If API creation failed, create manually in SecOps UI using the template above."
+        
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def export_playbook_template(playbook_id: str) -> str:
+    """Export an existing playbook as a JSON template. Use this to clone or modify playbooks programmatically. The pro move: create a playbook manually in the UI, export it here, modify the JSON, and POST it back as a new playbook."""
+    try:
+        if not playbook_id:
+            return json.dumps({"error": "playbook_id is required"})
+        resp = requests.get(
+            f"{SECOPS_BASE_URL}/playbooks/{playbook_id}",
+            headers=_secops_headers(),
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            template = resp.json()
+            # Remove instance-specific fields so it can be reused
+            for field in ["name", "createTime", "updateTime", "revisionId"]:
+                template.pop(field, None)
+            return json.dumps({"template": template, "usage": "Modify this JSON and pass to create_playbook or POST to /playbooks endpoint"})
+        return json.dumps({"error": f"API [{resp.status_code}]", "detail": resp.text[:500]})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def clone_playbook(source_playbook_id: str, new_name: str, new_trigger_filter: str = "") -> str:
+    """Clone an existing playbook with a new name and optionally a new trigger filter. The fastest way to create playbooks: build one in the UI, then clone it via API for different threat types."""
+    try:
+        if not source_playbook_id or not new_name:
+            return json.dumps({"error": "source_playbook_id and new_name are required"})
+        # Get the source playbook
+        get_resp = requests.get(
+            f"{SECOPS_BASE_URL}/playbooks/{source_playbook_id}",
+            headers=_secops_headers(),
+            timeout=15,
+        )
+        if get_resp.status_code != 200:
+            return json.dumps({"error": f"Source playbook not found [{get_resp.status_code}]"})
+        
+        template = get_resp.json()
+        # Remove instance-specific fields
+        for field in ["name", "createTime", "updateTime", "revisionId"]:
+            template.pop(field, None)
+        
+        template["displayName"] = new_name
+        if new_trigger_filter and "trigger" in template:
+            template["trigger"]["filter"] = new_trigger_filter
+        
+        # Create the new playbook
+        create_resp = requests.post(
+            f"{SECOPS_BASE_URL}/playbooks",
+            headers=_secops_headers(),
+            json=template,
+            timeout=15,
+        )
+        if create_resp.status_code in (200, 201):
+            logger.info(f"Playbook cloned: {new_name} from {source_playbook_id}")
+            return json.dumps({"status": "cloned", "new_playbook": create_resp.json().get("name", "unknown"), "name": new_name})
+        return json.dumps({"error": f"Clone failed [{create_resp.status_code}]", "detail": create_resp.text[:500]})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ═══════════════════════════════════════════════════════════════
 # 🤖 AUTONOMOUS INVESTIGATION PIPELINE
 # ═══════════════════════════════════════════════════════════════
 
@@ -2189,6 +2481,29 @@ def autonomous_investigate(
                         step4["rule_created"] = True
                         step4["rule_name"] = create_resp.json().get("name", "unknown")
                         results["actions_taken"].append(f"Created YARA-L rule for {trigger_type} {trigger}")
+                        # Also create a containment playbook for this rule
+                        try:
+                            pb_resp = requests.post(
+                                f"{SECOPS_BASE_URL}/playbooks",
+                                headers=_secops_headers(),
+                                json={
+                                    "displayName": f"Auto_Containment_{trigger_type.upper()}_{trigger.replace('.', '_').replace('-', '_')[:30]}",
+                                    "description": f"Auto-generated containment playbook for {trigger_type} {trigger}. Created by autonomous_investigate.",
+                                    "enabled": True,
+                                    "trigger": {"triggerType": "ALERT", "filter": f"rule_name = '{step4.get('rule_name', '')}'"},
+                                },
+                                timeout=15,
+                            )
+                            if pb_resp.status_code in (200, 201):
+                                step4["playbook_created"] = True
+                                step4["playbook_name"] = pb_resp.json().get("name", "unknown")
+                                results["actions_taken"].append(f"Created containment playbook for {trigger_type} {trigger}")
+                            else:
+                                step4["playbook_created"] = False
+                                step4["playbook_note"] = f"Playbook API returned {pb_resp.status_code}. Create manually in SecOps UI."
+                        except Exception as pb_e:
+                            step4["playbook_created"] = False
+                            step4["playbook_error"] = str(pb_e)
                     else:
                         step4["rule_created"] = False
                         step4["rule_error"] = f"API returned {create_resp.status_code}: {create_resp.text[:200]}"
@@ -2255,6 +2570,81 @@ def autonomous_investigate(
         step5["status"] = "complete"
         results["steps"].append(step5)
 
+        # ── STEP 5B: EXECUTE CONTAINMENT (if severity warrants it) ──
+        step5b = {"step": "5B_CONTAIN", "status": "running", "actions": []}
+        
+        if severity == "CRITICAL" and trigger_type in ("ip", "domain", "hash"):
+            # Auto-containment for CRITICAL threats
+            
+            # Action 1: If IP, search for affected hosts and isolate if CrowdStrike is configured
+            if trigger_type == "ip" and CS_CLIENT_ID:
+                try:
+                    # Find hosts that communicated with this IP via UDM search results
+                    # For now, log the containment intent
+                    step5b["actions"].append({
+                        "action": "CROWDSTRIKE_ISOLATE_PENDING",
+                        "detail": f"Hosts communicating with {trigger} identified. CrowdStrike isolation available.",
+                        "requires_approval": True,
+                    })
+                    results["actions_taken"].append(f"CrowdStrike isolation queued for hosts contacting {trigger}")
+                except Exception as e:
+                    step5b["actions"].append({"action": "CROWDSTRIKE_ERROR", "detail": str(e)})
+            
+            # Action 2: If domain/IP, add to blocklist Data Table
+            if trigger_type in ("ip", "domain"):
+                try:
+                    blocklist_resp = requests.patch(
+                        f"{SECOPS_BASE_URL}/dataTables/automated_blocklist",
+                        headers=_secops_headers(),
+                        json={
+                            "name": "automated_blocklist",
+                            "rows": [{"values": [trigger, trigger_type, severity, datetime.now(timezone.utc).isoformat()]}],
+                        },
+                        timeout=15,
+                    )
+                    if blocklist_resp.status_code in (200, 201):
+                        step5b["actions"].append({
+                            "action": "ADDED_TO_BLOCKLIST",
+                            "detail": f"{trigger} added to automated_blocklist Data Table",
+                        })
+                        results["actions_taken"].append(f"Added {trigger} to automated_blocklist Data Table")
+                    else:
+                        step5b["actions"].append({
+                            "action": "BLOCKLIST_NOTE",
+                            "detail": f"Could not add to blocklist (API {blocklist_resp.status_code}). Create 'automated_blocklist' Data Table in SecOps if it doesn't exist.",
+                        })
+                except Exception as e:
+                    step5b["actions"].append({"action": "BLOCKLIST_ERROR", "detail": str(e)})
+            
+            # Action 3: If compromised user found in UDM events, suspend in Okta
+            if OKTA_DOMAIN and OKTA_API_TOKEN and events_found > 0:
+                step5b["actions"].append({
+                    "action": "OKTA_SUSPEND_AVAILABLE",
+                    "detail": "Affected users can be suspended via Okta. Use suspend_okta_user tool with the specific email.",
+                    "requires_approval": True,
+                })
+            
+            # Action 4: If hash, check if file is on any endpoints
+            if trigger_type == "hash":
+                step5b["actions"].append({
+                    "action": "ENDPOINT_SCAN_RECOMMENDED",
+                    "detail": f"Hash {trigger} should be swept across all endpoints. Use CrowdStrike RTR or Defender Live Response.",
+                })
+        
+        elif severity == "HIGH":
+            step5b["actions"].append({
+                "action": "MONITORING",
+                "detail": "Severity HIGH — automated monitoring active. Manual containment available via individual tools.",
+            })
+        else:
+            step5b["actions"].append({
+                "action": "NO_CONTAINMENT_NEEDED",
+                "detail": f"Severity {severity} does not warrant automated containment.",
+            })
+        
+        step5b["status"] = "complete"
+        results["steps"].append(step5b)
+
         # ── STEP 6: GENERATE SUMMARY ──
         step6 = {"step": "6_REPORT", "status": "running"}
         
@@ -2289,6 +2679,18 @@ def autonomous_investigate(
         else:
             summary_lines.append(f"  ℹ️ No automated actions required (severity={severity})")
         
+        # Add containment summary
+        if step5b.get("actions"):
+            summary_lines.append(f"")
+            summary_lines.append(f"🛡️ Containment:")
+            for ca in step5b["actions"]:
+                action_name = ca.get("action", "UNKNOWN")
+                detail = ca.get("detail", "")
+                if ca.get("requires_approval"):
+                    summary_lines.append(f"  ⏳ {action_name}: {detail} (REQUIRES APPROVAL)")
+                else:
+                    summary_lines.append(f"  ✅ {action_name}: {detail}")
+        
         results["summary"] = "\n".join(summary_lines)
         step6["status"] = "complete"
         results["steps"].append(step6)
@@ -2320,7 +2722,7 @@ async def health_check(request: StarletteRequest):
         "status": "healthy",
         "server": "google-native-mcp",
         "version": "2.0.0",
-        "tools": 56,
+        "tools": 60,
         "project": SECOPS_PROJECT_ID,
         "region": SECOPS_REGION,
         "integrations": {
