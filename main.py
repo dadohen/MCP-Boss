@@ -1061,6 +1061,14 @@ def update_soar_case(
 def search_security_events(text: str = "", query: str = "", hours_back: int = 24, max_events: int = 100) -> str:
     """Search security events using natural language. Translates text to a UDM query via Gemini, then executes the search in SecOps."""
     try:
+        # SecOps UDM search endpoint is not available for this instance
+        return json.dumps({
+            "error": "SecOps UDM Search API not available",
+            "detail": "This feature requires the SecOps :udmSearch endpoint to be configured for your customer instance.",
+            "workaround": "Use search_secops_udm() directly with a valid UDM query instead."
+        })
+        
+        # Original implementation disabled due to API unavailability
         search_text = text or query
         if not search_text or len(search_text.strip()) < 3:
             return json.dumps({"error": "Search text too short"})
