@@ -338,16 +338,26 @@ def get_scc_findings(project_id: str = "", severity: str = "CRITICAL", max_resul
         for i, f in enumerate(findings):
             if i >= max_results:
                 break
-            results.append({
-                "resource": f.finding.resource_name,
-                "category": f.finding.category,
-                "severity": str(f.finding.severity),
-                "create_time": str(f.finding.create_time),
-                "external_uri": f.finding.external_uri,
-                "description": (f.finding.description or "")[:500],
-            })
+            # Extract rich finding data
+            finding_obj = f.finding
+            finding_dict = {
+                "resource_name": finding_obj.resource_name,
+                "category": finding_obj.category,
+                "severity": str(finding_obj.severity),
+                "create_time": str(finding_obj.create_time),
+                "external_uri": finding_obj.external_uri or "",
+                "description": (finding_obj.description or "")[:500],
+                "state": str(finding_obj.state),
+                "vulnerability": {
+                    "cves": list(finding_obj.vulnerability.cve or []),
+                    "cvss_score": finding_obj.vulnerability.cvss_v3.base_score if hasattr(finding_obj.vulnerability, 'cvss_v3') else None,
+                } if finding_obj.vulnerability else None,
+                "mute_state": str(finding_obj.mute) if hasattr(finding_obj, 'mute') else "UNMUTED",
+                "finding_class": finding_obj.finding_class if hasattr(finding_obj, 'finding_class') else "UNKNOWN",
+            }
+            results.append(finding_dict)
         logger.info(f"SCC: {len(results)} {severity} findings (state={state}, hours_back={hours_back}) for {project_id}")
-        return json.dumps({"scc_findings": results, "count": len(results)})
+        return json.dumps({"scc_findings": results, "count": len(results), "query": {"severity": severity, "state": state, "hours_back": hours_back}})
     except (PermissionDenied, NotFound, ValueError, GoogleAPICallError) as e:
         return json.dumps({"error": type(e).__name__, "detail": str(e)})
 
