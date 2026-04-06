@@ -119,7 +119,27 @@ Auth: Workload Identity + ADC. Zero embedded secrets.
   🤖 AUTONOMOUS INVESTIGATION
     - autonomous_investigate     → End-to-end: enrich → search → assess → detect → respond → report
 
-60 tools total.
+🔗 OFFICIAL GOOGLE MCP SERVER WRAPPERS (15 new tools)
+  SecOps MCP (10):
+    - secops_list_cases         → List all cases from official SecOps MCP
+    - secops_get_case           → Get case details
+    - secops_update_case        → Update case priority/status/comments
+    - secops_list_case_alerts   → List case alerts
+    - secops_get_case_alert     → Get alert details
+    - secops_update_case_alert  → Update alert status/severity
+    - secops_create_case_comment → Add comment to case
+    - secops_list_case_comments → List case comments
+    - secops_execute_bulk_close_case → Bulk close cases
+    - secops_execute_manual_action → Execute custom SOAR actions
+  
+  BigQuery MCP (5):
+    - bigquery_list_dataset_ids  → List BigQuery datasets
+    - bigquery_list_table_ids    → List tables in dataset
+    - bigquery_get_dataset_info  → Get dataset schema/metadata
+    - bigquery_get_table_info    → Get table schema/metadata
+    - bigquery_execute_sql       → Execute SQL query in BigQuery
+
+76 tools total (61 custom + 10 SecOps MCP + 5 BigQuery MCP).
 
 Author: David Adohen
 """
@@ -2865,6 +2885,324 @@ Be specific. Use the actual data provided. Do not hallucinate findings."""
     except Exception as e:
         logger.error(f"Autonomous investigation error: {e}")
         return json.dumps({"error": str(e), "trigger": trigger})
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🔗 OFFICIAL GOOGLE MCP SERVER WRAPPERS
+# ═══════════════════════════════════════════════════════════════
+# These tools call official Google MCP servers via HTTP POST to /mcp endpoint
+# using the MCP JSON-RPC 2.0 protocol: {"jsonrpc": "2.0", "method": "tools/call", ...}
+
+# ── SecOps MCP Server (https://chronicle.us.rep.googleapis.com/mcp) ──
+
+def _call_mcp_server(mcp_url: str, tool_name: str, arguments: dict) -> str:
+    """Generic helper to call any MCP server via HTTP POST with JSON-RPC 2.0 protocol."""
+    try:
+        token = get_adc_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments,
+            }
+        }
+        resp = requests.post(
+            f"{mcp_url}/mcp",
+            headers=headers,
+            json=payload,
+            timeout=60,
+        )
+        if resp.status_code in (200, 201):
+            result = resp.json()
+            # MCP protocol returns { "jsonrpc": "2.0", "result": {...} }
+            if "result" in result:
+                return json.dumps(result["result"])
+            return json.dumps(result)
+        else:
+            return json.dumps({"error": f"MCP API [{resp.status_code}]", "detail": resp.text[:500]})
+    except Exception as e:
+        return json.dumps({"error": f"MCP call failed: {str(e)}"})
+
+
+# ── SECOPS MCP TOOLS (10 tools) ──
+
+@app_mcp.tool()
+def secops_list_cases(limit: int = 100) -> str:
+    """List all cases from SecOps MCP. Returns case IDs, titles, and statuses via official SecOps MCP server."""
+    try:
+        limit = min(max(1, limit), 1000)
+        result = _call_mcp_server(
+            "https://chronicle.us.rep.googleapis.com",
+            "list_cases",
+            {"limit": limit}
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def secops_get_case(case_id: str) -> str:
+    """Get detailed information about a specific case from SecOps MCP."""
+    try:
+        if not case_id:
+            return json.dumps({"error": "case_id is required"})
+        result = _call_mcp_server(
+            "https://chronicle.us.rep.googleapis.com",
+            "get_case",
+            {"case_id": case_id}
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def secops_update_case(case_id: str, priority: str = "", status: str = "", comment: str = "") -> str:
+    """Update a case in SecOps MCP. Can update priority, status, and add comments."""
+    try:
+        if not case_id:
+            return json.dumps({"error": "case_id is required"})
+        arguments = {"case_id": case_id}
+        if priority:
+            arguments["priority"] = priority
+        if status:
+            arguments["status"] = status
+        if comment:
+            arguments["comment"] = comment
+        result = _call_mcp_server(
+            "https://chronicle.us.rep.googleapis.com",
+            "update_case",
+            arguments
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def secops_list_case_alerts(case_id: str, limit: int = 50) -> str:
+    """List all alerts associated with a specific case from SecOps MCP."""
+    try:
+        if not case_id:
+            return json.dumps({"error": "case_id is required"})
+        limit = min(max(1, limit), 500)
+        result = _call_mcp_server(
+            "https://chronicle.us.rep.googleapis.com",
+            "list_case_alerts",
+            {"case_id": case_id, "limit": limit}
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def secops_get_case_alert(case_id: str, alert_id: str) -> str:
+    """Get detailed information about a specific alert in a case from SecOps MCP."""
+    try:
+        if not case_id or not alert_id:
+            return json.dumps({"error": "case_id and alert_id are required"})
+        result = _call_mcp_server(
+            "https://chronicle.us.rep.googleapis.com",
+            "get_case_alert",
+            {"case_id": case_id, "alert_id": alert_id}
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def secops_update_case_alert(case_id: str, alert_id: str, status: str = "", severity: str = "") -> str:
+    """Update an alert in SecOps MCP. Can update status and severity."""
+    try:
+        if not case_id or not alert_id:
+            return json.dumps({"error": "case_id and alert_id are required"})
+        arguments = {"case_id": case_id, "alert_id": alert_id}
+        if status:
+            arguments["status"] = status
+        if severity:
+            arguments["severity"] = severity
+        result = _call_mcp_server(
+            "https://chronicle.us.rep.googleapis.com",
+            "update_case_alert",
+            arguments
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def secops_create_case_comment(case_id: str, comment_text: str) -> str:
+    """Create a comment on a case in SecOps MCP. Use for investigation notes and case wall updates."""
+    try:
+        if not case_id:
+            return json.dumps({"error": "case_id is required"})
+        if not comment_text or len(comment_text.strip()) < 1:
+            return json.dumps({"error": "comment_text is required"})
+        result = _call_mcp_server(
+            "https://chronicle.us.rep.googleapis.com",
+            "create_case_comment",
+            {"case_id": case_id, "comment": comment_text}
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def secops_list_case_comments(case_id: str, limit: int = 100) -> str:
+    """List all comments for a specific case from SecOps MCP."""
+    try:
+        if not case_id:
+            return json.dumps({"error": "case_id is required"})
+        limit = min(max(1, limit), 500)
+        result = _call_mcp_server(
+            "https://chronicle.us.rep.googleapis.com",
+            "list_case_comments",
+            {"case_id": case_id, "limit": limit}
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def secops_execute_bulk_close_case(case_ids: list, reason: str = "Resolved") -> str:
+    """Bulk close multiple cases in SecOps MCP. Efficient for closing related cases at once."""
+    try:
+        if not case_ids or not isinstance(case_ids, list):
+            return json.dumps({"error": "case_ids must be a non-empty list"})
+        result = _call_mcp_server(
+            "https://chronicle.us.rep.googleapis.com",
+            "execute_bulk_close_case",
+            {"case_ids": case_ids, "reason": reason}
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def secops_execute_manual_action(case_id: str, action_name: str, action_parameters: dict = None) -> str:
+    """Execute a manual action on a case in SecOps MCP. Supports custom SOAR playbook actions and escalations."""
+    try:
+        if not case_id or not action_name:
+            return json.dumps({"error": "case_id and action_name are required"})
+        arguments = {
+            "case_id": case_id,
+            "action_name": action_name,
+        }
+        if action_parameters:
+            arguments["action_parameters"] = action_parameters
+        result = _call_mcp_server(
+            "https://chronicle.us.rep.googleapis.com",
+            "execute_manual_action",
+            arguments
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ── BIGQUERY MCP TOOLS (5 tools) ──
+
+@app_mcp.tool()
+def bigquery_list_dataset_ids(project_id: str = "", limit: int = 100) -> str:
+    """List all dataset IDs in a BigQuery project from BigQuery MCP. Useful for discovering data sources."""
+    try:
+        project_id = project_id or SECOPS_PROJECT_ID
+        limit = min(max(1, limit), 1000)
+        result = _call_mcp_server(
+            "https://bigquery.googleapis.com",
+            "list_dataset_ids",
+            {"project_id": project_id, "limit": limit}
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def bigquery_list_table_ids(project_id: str = "", dataset_id: str = "", limit: int = 100) -> str:
+    """List all table IDs in a BigQuery dataset from BigQuery MCP."""
+    try:
+        project_id = project_id or SECOPS_PROJECT_ID
+        if not dataset_id:
+            return json.dumps({"error": "dataset_id is required"})
+        limit = min(max(1, limit), 1000)
+        result = _call_mcp_server(
+            "https://bigquery.googleapis.com",
+            "list_table_ids",
+            {"project_id": project_id, "dataset_id": dataset_id, "limit": limit}
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def bigquery_get_dataset_info(project_id: str = "", dataset_id: str = "") -> str:
+    """Get detailed information about a BigQuery dataset from BigQuery MCP. Returns schema, size, and metadata."""
+    try:
+        project_id = project_id or SECOPS_PROJECT_ID
+        if not dataset_id:
+            return json.dumps({"error": "dataset_id is required"})
+        result = _call_mcp_server(
+            "https://bigquery.googleapis.com",
+            "get_dataset_info",
+            {"project_id": project_id, "dataset_id": dataset_id}
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def bigquery_get_table_info(project_id: str = "", dataset_id: str = "", table_id: str = "") -> str:
+    """Get detailed information about a BigQuery table from BigQuery MCP. Returns schema, row count, and size."""
+    try:
+        project_id = project_id or SECOPS_PROJECT_ID
+        if not dataset_id or not table_id:
+            return json.dumps({"error": "dataset_id and table_id are required"})
+        result = _call_mcp_server(
+            "https://bigquery.googleapis.com",
+            "get_table_info",
+            {"project_id": project_id, "dataset_id": dataset_id, "table_id": table_id}
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@app_mcp.tool()
+def bigquery_execute_sql(query: str, project_id: str = "", max_results: int = 1000, dry_run: bool = False) -> str:
+    """Execute a SQL query in BigQuery via BigQuery MCP. Returns result rows and execution stats."""
+    try:
+        project_id = project_id or SECOPS_PROJECT_ID
+        if not query or len(query.strip()) < 5:
+            return json.dumps({"error": "SQL query is required and must be at least 5 characters"})
+        max_results = min(max(1, max_results), 100000)
+        result = _call_mcp_server(
+            "https://bigquery.googleapis.com",
+            "execute_sql",
+            {
+                "project_id": project_id,
+                "query": query,
+                "max_results": max_results,
+                "dry_run": dry_run
+            }
+        )
+        return result
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 # ═══════════════════════════════════════════════════════════════
