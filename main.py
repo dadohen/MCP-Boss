@@ -1051,10 +1051,11 @@ def update_soar_case(
 
 
 @app_mcp.tool()
-def search_security_events(text: str, hours_back: int = 24, max_events: int = 100) -> str:
+def search_security_events(text: str = "", query: str = "", hours_back: int = 24, max_events: int = 100) -> str:
     """Search security events using natural language. Translates text to a UDM query via Gemini, then executes the search in SecOps."""
     try:
-        if not text or len(text.strip()) < 3:
+        search_text = text or query
+        if not search_text or len(search_text.strip()) < 3:
             return json.dumps({"error": "Search text too short"})
         hours_back = min(max(1, hours_back), 8760)
         max_events = min(max(1, max_events), 10000)
