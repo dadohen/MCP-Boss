@@ -3419,10 +3419,58 @@ async def api_chat(request: StarletteRequest):
                         logger.error(f"Summary generation failed: {e}")
                         summary = f"Tool {tool_called} executed successfully. (Summary generation failed: {e})"
                     
+                    # Format tool_result for readability
+                    formatted_result = tool_result_data
+                    if isinstance(tool_result_data, dict):
+                        if "cases" in tool_result_data:
+                            # Format cases nicely
+                            cases = tool_result_data.get("cases", [])
+                            formatted_result = {
+                                "count": len(cases),
+                                "cases": [
+                                    {
+                                        "name": c.get("title") or c.get("displayName") or c.get("id"),
+                                        "priority": c.get("priority", "").replace("PRIORITY_", ""),
+                                        "status": c.get("status", ""),
+                                        "created": c.get("create_time", "")[:19],
+                                    }
+                                    for c in cases[:20]
+                                ]
+                            }
+                        elif "rules" in tool_result_data:
+                            # Format rules nicely
+                            rules = tool_result_data.get("rules", [])
+                            formatted_result = {
+                                "count": len(rules),
+                                "rules": [
+                                    {
+                                        "name": r.get("displayName") or r.get("name"),
+                                        "enabled": r.get("enabled", False),
+                                        "severity": r.get("severity", "UNKNOWN"),
+                                    }
+                                    for r in rules[:20]
+                                ]
+                            }
+                        elif "data_tables" in tool_result_data:
+                            # Format data tables nicely
+                            tables = tool_result_data.get("data_tables", [])
+                            formatted_result = {
+                                "count": len(tables),
+                                "tables": [
+                                    {
+                                        "name": t.get("displayName") or t.get("name"),
+                                        "rows": t.get("row_count", 0),
+                                        "schema": t.get("schema", {}).get("columns", [])[0:3] if t.get("schema") else [],
+                                    }
+                                    for t in tables[:20]
+                                ]
+                            }
+                    
                     return JSONResponse({
                         "tool_called": tool_called,
                         "tool_args": tool_args,
-                        "tool_result": tool_result_data,
+                        "tool_result": formatted_result,
+                        "raw_result_preview": str(tool_result_data)[:300],
                         "response": summary
                     })
                 except Exception as e:
