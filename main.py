@@ -3372,17 +3372,18 @@ async def api_chat(request: StarletteRequest):
                 
                 # Execute the tool
                 try:
-                    result = await app_mcp._tool_manager.call_tool(tool_called, tool_args)
-                    if result:
-                        # Handle ToolResult objects
-                        if hasattr(result[0], 'text') and result[0].text:
-                            result_text = result[0].text
-                        elif hasattr(result[0], 'content'):
-                            result_text = result[0].content
-                        else:
-                            result_text = str(result[0])
-                    else:
-                        result_text = "No result"
+                    # Call the tool directly by bypassing the MCP wrapper
+                    # This avoids the text truncation bug in _tool_manager.call_tool()
+                    tool = app_mcp._tool_manager._tools.get(tool_called)
+                    if not tool:
+                        raise ValueError(f"Tool {tool_called} not found")
+                    
+                    # Call the tool function directly with the arguments
+                    result_text = tool.fn(**tool_args)
+                    
+                    # Ensure result_text is a string
+                    if not isinstance(result_text, str):
+                        result_text = str(result_text)
                     
                     # Try to parse as JSON, fall back to string
                     try:
