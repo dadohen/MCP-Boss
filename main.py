@@ -1117,7 +1117,12 @@ def search_security_events(text: str = "", query: str = "", hours_back: int = 24
             data = resp.json()
             events = data.get("events", data.get("results", []))[:max_events]
             return json.dumps({"natural_language_query": search_text, "udm_query": udm_query_clean, "events": events, "count": len(events)})
-        return json.dumps({"error": f"SecOps search failed [{resp.status_code}]", "udm_query": udm_query_clean, "detail": resp.text[:500]})
+        error_msg = resp.json().get('error', {}).get('message', resp.text[:200])
+        return json.dumps({
+            "error": f"SecOps UDM search failed [{resp.status_code}]: {error_msg}",
+            "udm_query": udm_query_clean,
+            "note": "Verify SecOps API endpoint is accessible and credentials have required scopes"
+        })
     except Exception as e:
         return json.dumps({"error": str(e)})
 
