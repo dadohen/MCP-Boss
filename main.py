@@ -304,7 +304,7 @@ def get_scc_findings(project_id: str = "", severity: str = "CRITICAL", max_resul
             hours_back = min(max(1, hours_back), 8760)
             cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_back)
             cutoff_iso = cutoff.isoformat()
-            filter_str += f' AND createTime >= "{cutoff_iso}"'
+            filter_str += f' AND eventTime >= "{cutoff_iso}"'
         
         client = securitycenter.SecurityCenterClient()
         findings = client.list_findings(request={
