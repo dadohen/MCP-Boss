@@ -387,10 +387,11 @@ def query_cloud_logging(project_id: str = "", filter_string: str = "", max_resul
 
 
 @app_mcp.tool()
-def search_secops_udm(query: str, hours_back: int = 24, max_events: int = 100, start_time: str = "", end_time: str = "") -> str:
+def search_secops_udm(query: str = "", udm_query: str = "", hours_back: int = 24, max_events: int = 100, start_time: str = "", end_time: str = "") -> str:
     """Execute a UDM search query in Google SecOps (Chronicle). Uses the v1alpha udmSearch API with time range filtering."""
     try:
-        if not query or len(query.strip()) < 5:
+        final_query = query or udm_query
+        if not final_query or len(final_query.strip()) < 5:
             return json.dumps({"error": "Query too short"})
         max_events = min(max(1, max_events), 10000)
         
@@ -403,7 +404,7 @@ def search_secops_udm(query: str, hours_back: int = 24, max_events: int = 100, s
             f"{SECOPS_BASE_URL}:udmSearch",
             headers=_secops_headers(),
             params={
-                "query": query,
+                "query": final_query,
                 "time_range.start_time": start,
                 "time_range.end_time": end,
                 "limit": max_events,
@@ -417,7 +418,7 @@ def search_secops_udm(query: str, hours_back: int = 24, max_events: int = 100, s
                 "events": events[:max_events],
                 "total_events": len(events),
                 "more_data_available": data.get("moreDataAvailable", False),
-                "query": query,
+                "query": final_query,
                 "time_range": {"start": start, "end": end},
             })
         return json.dumps({"error": f"SecOps API [{resp.status_code}]", "detail": resp.text[:500]})
