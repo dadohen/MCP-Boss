@@ -1076,8 +1076,18 @@ def search_security_events(text: str = "", query: str = "", hours_back: int = 24
         )
         translate_prompt = (
             "You are a Google SecOps UDM query expert. Convert the following natural language "
-            "security search into a valid UDM Search query. Return ONLY the raw UDM query string, "
-            "nothing else. No markdown, no explanation.\n\n"
+            "security search into a valid UDM Search query matching Google Chronicle metadata field names.\n\n"
+            "Field reference:\n"
+            "  metadata.event_type (e.g., \"USER_LOGIN\", \"USER_LOGOUT\", \"PROCESS_EXECUTION\")\n"
+            "  security_result.action (e.g., \"ALLOW\", \"DENY\")\n"
+            "  security_result.severity (e.g., \"HIGH\", \"MEDIUM\", \"LOW\")\n"
+            "  principal.user.user_display_name\n"
+            "  target.ip, target.hostname\n"
+            "  metadata.event_timestamp\n\n"
+            "Use AND/OR operators. Examples:\n"
+            "  metadata.event_type = \"USER_LOGIN\" AND security_result.action = \"ALLOW\"\n"
+            "  target.ip = \"8.8.8.8\" AND metadata.event_type = \"NETWORK_HTTP\"\n\n"
+            "Return ONLY the UDM query string, nothing else.\n\n"
             f"Natural language: {search_text}\n\nUDM Query:"
         )
         gemini_resp = requests.post(
