@@ -292,15 +292,24 @@ def parse_time_range(hours_back: int = 24, start_time: str = "", end_time: str =
 
 
 @app_mcp.tool()
-def get_scc_findings(project_id: str = "", severity: str = "CRITICAL", max_results: int = 10, state: str = "ACTIVE") -> str:
-    """Fetch vulnerabilities from Security Command Center. Filters by severity and state (ACTIVE, INACTIVE, RESOLVED)."""
+def get_scc_findings(project_id: str = "", severity: str = "CRITICAL", max_results: int = 10, state: str = "ACTIVE", hours_back: int = 720) -> str:
+    """Fetch vulnerabilities from Security Command Center. Filters by severity and state (ACTIVE, INACTIVE, RESOLVED) with optional time range filtering."""
     try:
         project_id = validate_project_id(project_id or SECOPS_PROJECT_ID)
         max_results = min(max(1, max_results), 50)
+        
+        # Build dynamic filter with time range support
+        filter_str = f'state="{state.upper()}" AND severity="{severity.upper()}"'
+        if hours_back > 0:
+            hours_back = min(max(1, hours_back), 8760)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_back)
+            cutoff_iso = cutoff.isoformat()
+            filter_str += f' AND createTime >= "{cutoff_iso}"'
+        
         client = securitycenter.SecurityCenterClient()
         findings = client.list_findings(request={
             "parent": f"projects/{project_id}",
-            "filter": f'state="{state.upper()}" AND severity="{severity.upper()}"',
+            "filter": filter_str,
         })
         results = []
         for i, f in enumerate(findings):
@@ -314,7 +323,7 @@ def get_scc_findings(project_id: str = "", severity: str = "CRITICAL", max_resul
                 "external_uri": f.finding.external_uri,
                 "description": (f.finding.description or "")[:500],
             })
-        logger.info(f"SCC: {len(results)} {severity} findings (state={state}) for {project_id}")
+        logger.info(f"SCC: {len(results)} {severity} findings (state={state}, hours_back={hours_back}) for {project_id}")
         return json.dumps({"scc_findings": results, "count": len(results)})
     except (PermissionDenied, NotFound, ValueError, GoogleAPICallError) as e:
         return json.dumps({"error": type(e).__name__, "detail": str(e)})
