@@ -3789,31 +3789,26 @@ def create_detection_rule_for_scc_finding(finding_category: str, resource: str =
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🎯 SIMPLE INTENT-BASED TOOLS (Direct NL Matching)
+# 🎯 SIMPLE INTENT-BASED TOOLS (Using SecOpsClient Library)
 # ═══════════════════════════════════════════════════════════════
+
+from secops import SecOpsClient
 
 @app_mcp.tool()
 def get_last_logins(count: int = 5) -> str:
     """Get the last N user login events. Use for: 'last 5 logins', 'last 10 logins'."""
     try:
-        start = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        end = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        resp = requests.post(
-            f"{SECOPS_BASE_URL}:udmSearch",
-            headers=_secops_headers(),
-            json={
-                "query": 'metadata.event_type = "USER_LOGIN"',
-                "startTime": start,
-                "endTime": end,
-                "maxResults": count,
-            },
-            timeout=60,
+        client = SecOpsClient()
+        chronicle = client.chronicle(
+            customer_id=SECOPS_CUSTOMER_ID,
+            project_id=SECOPS_PROJECT_ID,
+            region=SECOPS_REGION
         )
-        if resp.status_code == 200:
-            data = resp.json()
-            events = data.get("events", [])[:count]
-            return json.dumps({"count": len(events), "events": events})
-        return json.dumps({"error": f"API {resp.status_code}"})
+        events = chronicle.query_events(
+            query='metadata.event_type = "USER_LOGIN"',
+            max_results=count
+        )
+        return json.dumps({"count": len(events), "events": events})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -3821,36 +3816,28 @@ def get_last_logins(count: int = 5) -> str:
 def get_last_cases(count: int = 5) -> str:
     """Get the last N SOAR cases. Use for: 'last 5 cases', 'last 10 cases'."""
     try:
-        resp = requests.get(
-            f"{SECOPS_V1BETA_BASE}/cases",
-            headers=_secops_headers(),
-            params={"pageSize": count},
-            timeout=30,
+        client = SecOpsClient()
+        chronicle = client.chronicle(
+            customer_id=SECOPS_CUSTOMER_ID,
+            project_id=SECOPS_PROJECT_ID,
+            region=SECOPS_REGION
         )
-        if resp.status_code == 200:
-            data = resp.json()
-            cases = data.get("cases", [])[:count]
-            return json.dumps({"count": len(cases), "cases": cases})
-        return json.dumps({"error": f"API {resp.status_code}"})
+        cases = chronicle.list_cases(page_size=count)
+        return json.dumps({"count": len(cases), "cases": cases})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 @app_mcp.tool()
-def get_last_detections(count: int = 5) -> str:
+def get_last_detections(count: int = 5, num_detections: int = 0) -> str:
     """Get the last N detection alerts. Use for: 'last 5 detections', 'last 10 detections'."""
     try:
-        start = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        end = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        resp = requests.post(
-            f"{SECOPS_BASE_URL}/rules:listDetections",
-            headers=_secops_headers(),
-            json={"pageSize": count, "startTime": start, "endTime": end},
-            timeout=30,
+        client = SecOpsClient()
+        chronicle = client.chronicle(
+            customer_id=SECOPS_CUSTOMER_ID,
+            project_id=SECOPS_PROJECT_ID,
+            region=SECOPS_REGION
         )
-        if resp.status_code == 200:
-            data = resp.json()
-            detections = data.get("detections", [])[:count]
-            return json.dumps({"count": len(detections), "detections": detections})
-        return json.dumps({"error": f"API {resp.status_code}"})
+        detections = chronicle.list_detections(page_size=count)
+        return json.dumps({"count": len(detections), "detections": detections})
     except Exception as e:
         return json.dumps({"error": str(e)})
