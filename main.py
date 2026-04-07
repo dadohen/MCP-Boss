@@ -1103,12 +1103,18 @@ def update_soar_case(
 
 
 @app_mcp.tool()
-def search_security_events(text: str = "", query: str = "", hours_back: int = 24, max_events: int = 100) -> str:
+def search_security_events(text: str = "", query: str = "", hours_back: int = 24, time_range: str = "", max_events: int = 100) -> str:
     """[SECOPS CHRONICLE] Search UDM for logins, malware, threats. Translates natural language to UDM: metadata.event_type=USER_LOGIN, security_result.action=ALLOW, etc."""
     try:
         search_text = text or query
         if not search_text or len(search_text.strip()) < 3:
             return json.dumps({"error": "Search text too short"})
+        # Handle time_range parameter (e.g., "30 days")
+        if time_range:
+            if "day" in time_range.lower():
+                hours_back = int(time_range.split()[0]) * 24
+            elif "hour" in time_range.lower():
+                hours_back = int(time_range.split()[0])
         hours_back = min(max(1, hours_back), 8760)
         max_events = min(max(1, max_events), 10000)
 
