@@ -1552,12 +1552,12 @@ def search_malware_families(query: str, limit: int = 10) -> str:
 
 
 @app_mcp.tool()
-def top_vulnerability_findings(project_id: str = "", max_findings: int = 20, count: int = 0) -> str:
+def top_vulnerability_findings(project_id: str = "", max_findings: int = 20, count: int = 0, page_size: int = 0, limit: int = 0) -> str:
     """Get top vulnerability findings from Security Command Center sorted by Attack Exposure Score. Returns findings with severity, category, resource, and remediation priority."""
     try:
         project_id = validate_project_id(project_id or SECOPS_PROJECT_ID)
-        # Accept both 'max_findings' and 'count' parameters
-        final_count = count or max_findings
+        # Accept multiple parameter names: max_findings, count, page_size, limit
+        final_count = count or max_findings or page_size or limit or 5
         final_count = min(max(1, final_count), 100)
         max_findings = final_count
         client = securitycenter.SecurityCenterClient()
