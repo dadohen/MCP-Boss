@@ -3836,7 +3836,9 @@ def get_last_cases(count: int = 5, n: int = 0, N: int = 0, num_cases: int = 0, l
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        cases = chronicle.list_cases(page_size=count)
+        result = chronicle.list_cases(page_size=count)
+        # Handle dict response with 'cases' key
+        cases = result.get('cases', []) if isinstance(result, dict) else result
         return json.dumps({"count": len(cases), "cases": cases})
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -3855,7 +3857,9 @@ def get_last_detections(count: int = 5, n: int = 0, N: int = 0, num_detections: 
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        detections = chronicle.list_detections(page_size=count)
+        result = chronicle.list_detections(page_size=count)
+        # Handle dict response with 'detections' key
+        detections = result.get('detections', []) if isinstance(result, dict) else result
         return json.dumps({"count": len(detections), "detections": detections})
     except Exception as e:
         return json.dumps({"error": str(e)})
