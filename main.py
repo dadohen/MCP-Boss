@@ -3793,10 +3793,10 @@ def create_detection_rule_for_scc_finding(finding_category: str, resource: str =
 # ═══════════════════════════════════════════════════════════════
 
 @app_mcp.tool()
-def get_last_logins(count: int = 5, n: int = 0, N: int = 0, num_events: int = 0, num_logins: int = 0, limit: int = 0) -> str:
+def get_last_logins(count: int = 5, n: int = 0, N: int = 0, num_events: int = 0, num_logins: int = 0, limit: int = 0, number_of_logins: int = 0) -> str:
     """Get the last N user login events. Use for: 'last 5 logins', 'last 10 logins'."""
     # Handle parameter name variations from different callers
-    for val in [n, N, num_events, num_logins, limit]:
+    for val in [n, N, num_events, num_logins, limit, number_of_logins]:
         if val > 0:
             count = val
             break
@@ -3823,9 +3823,9 @@ def get_last_logins(count: int = 5, n: int = 0, N: int = 0, num_events: int = 0,
         return json.dumps({"error": str(e)})
 
 @app_mcp.tool()
-def get_last_cases(count: int = 5, n: int = 0, N: int = 0, num_cases: int = 0, limit: int = 0) -> str:
+def get_last_cases(count: int = 5, n: int = 0, N: int = 0, num_cases: int = 0, limit: int = 0, number_of_cases: int = 0) -> str:
     """Get the last N SOAR cases. Use for: 'last 5 cases', 'last 10 cases'."""
-    for val in [n, N, num_cases, limit]:
+    for val in [n, N, num_cases, limit, number_of_cases]:
         if val > 0:
             count = val
             break
@@ -3845,9 +3845,9 @@ def get_last_cases(count: int = 5, n: int = 0, N: int = 0, num_cases: int = 0, l
         return json.dumps({"error": str(e)})
 
 @app_mcp.tool()
-def get_last_detections(count: int = 5, n: int = 0, N: int = 0, num_detections: int = 0, limit: int = 0) -> str:
+def get_last_detections(count: int = 5, n: int = 0, N: int = 0, num_detections: int = 0, limit: int = 0, number_of_detections: int = 0) -> str:
     """Get the last N detection alerts. Use for: 'last 5 detections', 'last 10 detections'."""
-    for val in [n, N, num_detections, limit]:
+    for val in [n, N, num_detections, limit, number_of_detections]:
         if val > 0:
             count = val
             break
