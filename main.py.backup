@@ -4,6 +4,8 @@ Automated SOC MCP Server — Full Security Operations Suite
 The complete autonomous security operations toolkit bridging every Google Cloud
 Security pillar plus third-party containment APIs into a single MCP endpoint.
 
+SecOps tools now use SecOpsClient library for reliable authentication.
+
 TOOL CATEGORIES:
   🔍 DISCOVERY & HUNTING (read-only)
     - get_scc_findings          → Security Command Center vulnerabilities (any state/severity)
@@ -152,6 +154,7 @@ import requests
 import google.auth
 from google.auth.transport.requests import Request as GCPRequest
 from google.auth.exceptions import DefaultCredentialsError, RefreshError
+from secops import SecOpsClient
 from google.cloud import securitycenter
 from google.cloud import logging as cloud_logging
 from google.api_core.exceptions import (
@@ -162,6 +165,46 @@ from google.api_core.exceptions import (
 )
 from mcp.server.fastmcp import FastMCP
 from datetime import datetime, timedelta, timezone
+import uuid
+
+# ═══════════════════════════════════════════════════════════════
+# SESSION MEMORY (In-Memory Store)
+# ═══════════════════════════════════════════════════════════════
+
+class SessionMemory:
+    """Store context/state for a session."""
+    def __init__(self):
+        self.sessions = {}
+    
+    def create_session(self):
+        session_id = str(uuid.uuid4())
+        self.sessions[session_id] = {
+            'created': datetime.now(timezone.utc),
+            'last_case_id': None,
+            'last_alert_id': None,
+            'last_ip': None,
+            'last_user': None,
+            'last_domain': None,
+            'investigation_notes': [],
+            'context': {}
+        }
+        return session_id
+    
+    def get_session(self, session_id):
+        return self.sessions.get(session_id)
+    
+    def update_session(self, session_id, key, value):
+        if session_id in self.sessions:
+            self.sessions[session_id][key] = value
+    
+    def add_note(self, session_id, note):
+        if session_id in self.sessions:
+            self.sessions[session_id]['investigation_notes'].append({
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'note': note
+            })
+
+session_store = SessionMemory()
 
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURATION
@@ -209,6 +252,51 @@ logger = logging.getLogger("google-native-mcp")
 # ═══════════════════════════════════════════════════════════════
 
 app_mcp = FastMCP("google-native-mcp", json_response=True)
+
+# Session management endpoints
+@app_mcp.tool()
+def create_session() -> str:
+    """Create a new session for maintaining context across multiple queries."""
+    session_id = session_store.create_session()
+    return json.dumps({"session_id": session_id, "status": "created"})
+
+@app_mcp.tool()
+def get_session(session_id: str) -> str:
+    """Get current session state and investigation notes."""
+    session = session_store.get_session(session_id)
+    if not session:
+        return json.dumps({"error": "Session not found"})
+    return json.dumps(session, default=str)
+
+@app_mcp.tool()
+def set_session_context(session_id: str, case_id: str = "", alert_id: str = "", ip: str = "", user: str = "", domain: str = "") -> str:
+    """Update session context with investigation targets."""
+    session = session_store.get_session(session_id)
+    if not session:
+        return json.dumps({"error": "Session not found"})
+    
+    if case_id:
+        session_store.update_session(session_id, 'last_case_id', case_id)
+    if alert_id:
+        session_store.update_session(session_id, 'last_alert_id', alert_id)
+    if ip:
+        session_store.update_session(session_id, 'last_ip', ip)
+    if user:
+        session_store.update_session(session_id, 'last_user', user)
+    if domain:
+        session_store.update_session(session_id, 'last_domain', domain)
+    
+    return json.dumps({"status": "updated", "session_id": session_id})
+
+@app_mcp.tool()
+def add_investigation_note(session_id: str, note: str) -> str:
+    """Add an investigation note to the session."""
+    session = session_store.get_session(session_id)
+    if not session:
+        return json.dumps({"error": "Session not found"})
+    
+    session_store.add_note(session_id, note)
+    return json.dumps({"status": "note_added", "total_notes": len(session['investigation_notes'])})
 
 # ═══════════════════════════════════════════════════════════════
 # HELPERS
@@ -3789,14 +3877,16 @@ def create_detection_rule_for_scc_finding(finding_category: str, resource: str =
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🎯 SIMPLE INTENT-BASED TOOLS (Using SecOpsClient Library)
+# 🎯 SIMPLE INTENT-BASED TOOLS (Direct NL Matching)
 # ═══════════════════════════════════════════════════════════════
 
-from secops import SecOpsClient
-
 @app_mcp.tool()
-def get_last_logins(count: int = 5) -> str:
+def get_last_logins(count: int = 5, n: int = 0, N: int = 0, num_events: int = 0, num_logins: int = 0, limit: int = 0, number_of_logins: int = 0) -> str:
     """Get the last N user login events. Use for: 'last 5 logins', 'last 10 logins'."""
+    for val in [n, N, num_events, num_logins, limit, number_of_logins]:
+        if val > 0:
+            count = val
+            break
     try:
         client = SecOpsClient()
         chronicle = client.chronicle(
@@ -3804,17 +3894,26 @@ def get_last_logins(count: int = 5) -> str:
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        events = chronicle.query_events(
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=24)
+        result = chronicle.search_udm(
             query='metadata.event_type = "USER_LOGIN"',
-            max_results=count
+            start_time=start_time,
+            end_time=end_time,
+            max_events=count
         )
+        events = result.get("events", []) if isinstance(result, dict) else result
         return json.dumps({"count": len(events), "events": events})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 @app_mcp.tool()
-def get_last_cases(count: int = 5) -> str:
+def get_last_cases(count: int = 5, n: int = 0, N: int = 0, num_cases: int = 0, limit: int = 0, number_of_cases: int = 0) -> str:
     """Get the last N SOAR cases. Use for: 'last 5 cases', 'last 10 cases'."""
+    for val in [n, N, num_cases, limit, number_of_cases]:
+        if val > 0:
+            count = val
+            break
     try:
         client = SecOpsClient()
         chronicle = client.chronicle(
@@ -3822,14 +3921,20 @@ def get_last_cases(count: int = 5) -> str:
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        cases = chronicle.list_cases(page_size=count)
+        result = chronicle.list_cases(page_size=count)
+        # Handle dict response with 'cases' key
+        cases = result.get('cases', []) if isinstance(result, dict) else result
         return json.dumps({"count": len(cases), "cases": cases})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 @app_mcp.tool()
-def get_last_detections(count: int = 5, num_detections: int = 0) -> str:
+def get_last_detections(count: int = 5, n: int = 0, N: int = 0, num_detections: int = 0, limit: int = 0, number_of_detections: int = 0) -> str:
     """Get the last N detection alerts. Use for: 'last 5 detections', 'last 10 detections'."""
+    for val in [n, N, num_detections, limit, number_of_detections]:
+        if val > 0:
+            count = val
+            break
     try:
         client = SecOpsClient()
         chronicle = client.chronicle(
@@ -3837,7 +3942,9 @@ def get_last_detections(count: int = 5, num_detections: int = 0) -> str:
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        detections = chronicle.list_detections(page_size=count)
+        result = chronicle.list_detections(page_size=count)
+        # Handle dict response with 'detections' key
+        detections = result.get('detections', []) if isinstance(result, dict) else result
         return json.dumps({"count": len(detections), "detections": detections})
     except Exception as e:
         return json.dumps({"error": str(e)})
