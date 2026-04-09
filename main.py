@@ -248,3 +248,178 @@ def revoke_azure_sessions(user_id: str) -> str:
 if __name__ == "__main__":
     logger.info("Starting Google Security Operations MCP")
     app.run(transport="stdio")
+
+# ════════════════════════════════════════════════════════════════
+# ADDITIONAL SECOPS TOOLS (via SecOpsClient)
+# ════════════════════════════════════════════════════════════════
+
+@app.tool()
+def list_feeds(count: int = 20) -> str:
+    """List threat intelligence feeds."""
+    try:
+        chronicle = _chronicle()
+        feeds = chronicle.list_feeds(page_size=count)
+        return json.dumps({'feeds': feeds, 'count': len(feeds)})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def list_parsers(count: int = 20) -> str:
+    """List log parsers."""
+    try:
+        chronicle = _chronicle()
+        parsers = chronicle.list_parsers(page_size=count)
+        return json.dumps({'parsers': parsers, 'count': len(parsers)})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def list_reference_lists(count: int = 20) -> str:
+    """List reference lists."""
+    try:
+        chronicle = _chronicle()
+        lists = chronicle.list_reference_lists(page_size=count)
+        return json.dumps({'lists': lists, 'count': len(lists)})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def list_watchlists(count: int = 20) -> str:
+    """List watchlists."""
+    try:
+        chronicle = _chronicle()
+        watchlists = chronicle.list_watchlists(page_size=count)
+        return json.dumps({'watchlists': watchlists, 'count': len(watchlists)})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def list_data_tables(count: int = 20) -> str:
+    """List data tables."""
+    try:
+        chronicle = _chronicle()
+        tables = chronicle.list_data_tables(page_size=count)
+        return json.dumps({'tables': tables, 'count': len(tables)})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def get_alert(alert_id: str) -> str:
+    """Get alert details."""
+    try:
+        chronicle = _chronicle()
+        alert = chronicle.get_alert(alert_id)
+        return json.dumps({'alert': alert})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def list_log_buckets(count: int = 20) -> str:
+    """List Cloud Logging buckets."""
+    try:
+        chronicle = _chronicle()
+        buckets = chronicle.list_log_buckets(page_size=count)
+        return json.dumps({'buckets': buckets, 'count': len(buckets)})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def create_reference_list(name: str, description: str = "") -> str:
+    """Create a new reference list."""
+    try:
+        chronicle = _chronicle()
+        result = chronicle.create_reference_list(display_name=name, description=description)
+        return json.dumps({'result': result})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def create_feed(name: str, source_type: str = "CUSTOM") -> str:
+    """Create a new threat intelligence feed."""
+    try:
+        chronicle = _chronicle()
+        result = chronicle.create_feed(display_name=name, source_type=source_type)
+        return json.dumps({'result': result})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def get_case_details(case_id: str) -> str:
+    """Get detailed case information."""
+    try:
+        chronicle = _chronicle()
+        case = chronicle.get_case(case_id)
+        return json.dumps({'case': case})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def list_case_alerts(case_id: str, count: int = 20) -> str:
+    """List alerts associated with a case."""
+    try:
+        chronicle = _chronicle()
+        alerts = chronicle.list_case_alerts(case_id, page_size=count)
+        return json.dumps({'alerts': alerts, 'count': len(alerts)})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def list_case_comments(case_id: str, count: int = 20) -> str:
+    """List comments on a case."""
+    try:
+        chronicle = _chronicle()
+        comments = chronicle.list_case_comments(case_id, page_size=count)
+        return json.dumps({'comments': comments, 'count': len(comments)})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def update_case(case_id: str, priority: str = "", stage: str = "") -> str:
+    """Update case priority or stage."""
+    try:
+        chronicle = _chronicle()
+        result = chronicle.update_case(case_id, priority=priority, stage=stage)
+        return json.dumps({'result': result})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def create_case_comment(case_id: str, text: str) -> str:
+    """Add a comment to a case."""
+    try:
+        chronicle = _chronicle()
+        result = chronicle.create_case_comment(case_id, text)
+        return json.dumps({'result': result})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def enable_feed(feed_id: str) -> str:
+    """Enable a threat intelligence feed."""
+    try:
+        chronicle = _chronicle()
+        result = chronicle.enable_feed(feed_id)
+        return json.dumps({'result': result})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def disable_feed(feed_id: str) -> str:
+    """Disable a threat intelligence feed."""
+    try:
+        chronicle = _chronicle()
+        result = chronicle.disable_feed(feed_id)
+        return json.dumps({'result': result})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+@app.tool()
+def get_curated_rule(rule_id: str) -> str:
+    """Get curated detection rule details."""
+    try:
+        chronicle = _chronicle()
+        rule = chronicle.get_curated_rule(rule_id)
+        return json.dumps({'rule': rule})
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
