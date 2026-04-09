@@ -260,48 +260,81 @@ def search_secops_udm(
 @app_mcp.tool()
 def list_secops_detections(
     max_results: int = 10,
-    status_filter: str = "",
-    priority_filter: str = "",
+    hours_back: int = 168,
+    start_time: str = "",
+    end_time: str = "",
+    include_custom_rules: bool = True,
+    filter_query: str = "",
 ) -> str:
     """
-    List recent detections/cases from Google SecOps — these are what appear in the
-    SecOps UI as 'Detections' or 'Cases'. Returns the most recent cases with rule
-    names, alert counts, priority, and stage.
+    List ALL recent detections from Google SecOps — both custom YARA-L rules AND
+    curated/built-in rules. Returns a unified view of every detection that fired,
+    sorted by alert count.
+
+    This combines:
+      1. Cases (curated + escalated rule detections visible in the UI)
+      2. Custom rule detections (from your deployed YARA-L rules)
 
     Args:
-        max_results:     Number of cases to return (default 10, max 200)
-        status_filter:   Optional filter string (e.g., 'status = "OPEN"')
-        priority_filter: Optional priority filter (e.g., 'priority = "HIGH"')
+        max_results:          Max detections to return (default 10)
+        hours_back:           Look-back window in hours (default 168 = 7 days)
+        start_time:           ISO 8601 UTC (overrides hours_back)
+        end_time:             ISO 8601 UTC (overrides hours_back)
+        include_custom_rules: Also scan custom rules for detections (default True)
+        filter_query:         Optional case filter (e.g., 'priority = "HIGH"')
     """
     try:
         chron = get_chronicle()
-        filter_parts = []
-        if status_filter:
-            filter_parts.append(status_filter)
-        if priority_filter:
-            filter_parts.append(priority_filter)
-        filter_query = " AND ".join(filter_parts) if filter_parts else None
+        start_dt, end_dt = _time_window(hours_back, start_time, end_time)
+        detections = []
+
+        # 1. Cases (includes curated rule detections + SOAR escalations)
         cases = chron.list_cases(
-            page_size=min(max_results, 200),
-            filter_query=filter_query,
+            page_size=min(max_results * 2, 200),
+            filter_query=filter_query if filter_query else None,
             order_by="updateTime desc",
             as_list=True,
         )
-        # Summarize for readability
-        summary = []
         for c in cases:
-            summary.append({
+            detections.append({
+                "rule": c.get("displayName", ""),
                 "case_id": c.get("name", "").split("/")[-1],
-                "name": c.get("displayName", ""),
+                "type": "CASE",
+                "severity": c.get("priority", "").replace("PRIORITY_", ""),
+                "detection_count": c.get("alertCount", 0),
                 "stage": c.get("stage", ""),
-                "priority": c.get("priority", ""),
-                "alert_count": c.get("alertCount", 0),
-                "assignee": c.get("assignee", {}).get("displayName", "unassigned"),
-                "update_time": c.get("updateTime", ""),
-                "create_time": c.get("createTime", ""),
+                "status": c.get("status", ""),
             })
-        logger.info(f"Detections/Cases: {len(summary)} returned")
-        return json.dumps({"detections": summary, "count": len(summary)})
+
+        # 2. Custom rule detections (raw YARA-L hits)
+        if include_custom_rules:
+            rules = chron.list_rules(page_size=100, as_list=True)
+            for rule in rules:
+                rid = rule.get("name", "").split("/")[-1]
+                name = rule.get("displayName", "")
+                sev = rule.get("severity", {})
+                sev_name = sev.get("displayName", "") if isinstance(sev, dict) else str(sev)
+                try:
+                    dets = chron.list_detections(
+                        rule_id=rid, start_time=start_dt, end_time=end_dt,
+                        page_size=5, as_list=True,
+                    )
+                    if dets:
+                        detections.append({
+                            "rule": name,
+                            "rule_id": rid,
+                            "type": "CUSTOM_RULE",
+                            "severity": sev_name,
+                            "detection_count": len(dets),
+                        })
+                except Exception:
+                    pass
+
+        # Sort by detection_count desc, return top N
+        detections.sort(key=lambda x: x.get("detection_count", 0), reverse=True)
+        detections = detections[:max_results]
+        logger.info(f"Detections: {len(detections)} returned (cases + custom rules)")
+        return json.dumps({"detections": detections, "count": len(detections)})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
