@@ -3766,3 +3766,111 @@ def get_last_detections(count: int = 5, n: int = 0, N: int = 0, num_detections: 
         return json.dumps({"count": len(detections), "detections": detections})
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+# ════════════════════════════════════════════════════════════════
+# INCIDENT RESPONSE: THIRD-PARTY CONTAINMENT TOOLS
+# ════════════════════════════════════════════════════════════════
+
+@app_mcp.tool()
+def suspend_okta_user(user_id: str = "", username: str = "", clear_sessions: bool = True) -> str:
+    """Suspend a user in Okta and optionally clear all active sessions (incident containment)."""
+    try:
+        OKTA_ORG_URL = os.getenv('OKTA_ORG_URL', '')
+        OKTA_API_TOKEN = os.getenv('OKTA_API_TOKEN', '')
+        
+        if not OKTA_ORG_URL or not OKTA_API_TOKEN:
+            return json.dumps({"error": "Okta not configured (OKTA_ORG_URL, OKTA_API_TOKEN)"})
+        
+        target_id = user_id or username
+        if not target_id:
+            return json.dumps({"error": "user_id or username required"})
+        
+        # Suspend user
+        resp = requests.post(
+            f"{OKTA_ORG_URL}/api/v1/users/{target_id}/lifecycle/suspend",
+            headers={'Authorization': f'Bearer {OKTA_API_TOKEN}', 'Content-Type': 'application/json'},
+            timeout=15
+        )
+        
+        if resp.status_code == 200:
+            result = {"status": "suspended", "user_id": target_id}
+            
+            # Clear sessions if requested
+            if clear_sessions:
+                requests.delete(
+                    f"{OKTA_ORG_URL}/api/v1/users/{target_id}/sessions",
+                    headers={'Authorization': f'Bearer {OKTA_API_TOKEN}'},
+                    timeout=15
+                )
+                result["sessions_cleared"] = True
+            
+            return json.dumps(result)
+        
+        return json.dumps({"error": f"Okta API [{resp.status_code}]: {resp.text[:200]}"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@app_mcp.tool()
+def revoke_azure_sessions(user_principal: str = "", user_id: str = "") -> str:
+    """Revoke all active Azure AD sessions for a user (incident containment)."""
+    try:
+        AZURE_TENANT = os.getenv('AZURE_TENANT_ID', '')
+        AZURE_CLIENT = os.getenv('AZURE_CLIENT_ID', '')
+        AZURE_SECRET = os.getenv('AZURE_CLIENT_SECRET', '')
+        
+        if not all([AZURE_TENANT, AZURE_CLIENT, AZURE_SECRET]):
+            return json.dumps({"error": "Azure not configured"})
+        
+        target = user_principal or user_id
+        if not target:
+            return json.dumps({"error": "user_principal or user_id required"})
+        
+        # Get token
+        token_resp = requests.post(
+            f"https://login.microsoftonline.com/{AZURE_TENANT}/oauth2/v2.0/token",
+            data={
+                'client_id': AZURE_CLIENT,
+                'client_secret': AZURE_SECRET,
+                'grant_type': 'client_credentials',
+                'scope': 'https://graph.microsoft.com/.default'
+            },
+            timeout=15
+        )
+        
+        if token_resp.status_code != 200:
+            return json.dumps({"error": "Failed to get Azure token"})
+        
+        token = token_resp.json()['access_token']
+        
+        # Revoke sessions
+        resp = requests.post(
+            f"https://graph.microsoft.com/v1.0/users/{target}/signOut",
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=15
+        )
+        
+        if resp.status_code in [200, 204]:
+            return json.dumps({"status": "sessions_revoked", "user": target})
+        
+        return json.dumps({"error": f"Azure API [{resp.status_code}]"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@app_mcp.tool()
+def purge_email_o365(mailbox: str = "", message_id: str = "", purge_type: str = "hardDelete") -> str:
+    """Purge an email from O365 mailbox (incident containment)."""
+    try:
+        O365_TENANT = os.getenv('OFFICE365_TENANT_ID', '')
+        if not O365_TENANT:
+            return json.dumps({"error": "O365 not configured (OFFICE365_TENANT_ID)"})
+        
+        if not mailbox or not message_id:
+            return json.dumps({"error": "mailbox and message_id required"})
+        
+        # Stub - requires Microsoft Graph auth
+        return json.dumps({
+            "status": "pending",
+            "message": f"Would purge message {message_id} from {mailbox} using {purge_type}"
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
