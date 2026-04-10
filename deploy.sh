@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# Google-Native MCP Server — Cloud Run Deployment Script
+# Google-Native MCP Server (TypeScript Edition) — Cloud Run Deployment
 # ═══════════════════════════════════════════════════════════════
 #
 # Usage:
@@ -9,13 +9,12 @@
 #
 # Prerequisites:
 #   - gcloud CLI installed and authenticated
-#   - Docker installed (for local testing only)
 #   - A GCP project with billing enabled
 #
 # This script:
 #   1. Creates the service account with least-privilege IAM roles
-#   2. Creates the GTI API key in Secret Manager
-#   3. Builds the Docker container via Cloud Build
+#   2. Enables all required APIs for 100+ tools
+#   3. Builds the Docker container via Cloud Build (Node/TS)
 #   4. Deploys to Cloud Run with Workload Identity
 #   5. Outputs the service URL
 # ═══════════════════════════════════════════════════════════════
@@ -26,12 +25,12 @@ set -euo pipefail
 
 PROJECT_ID="${GCP_PROJECT_ID:-your-project-id}"
 REGION="${GCP_REGION:-us-central1}"
-SERVICE_NAME="google-native-mcp"
+SERVICE_NAME="mcp-boss-ts"
 SA_NAME="native-mcp-sa"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 IMAGE_URL="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:latest"
 
-# SecOps instance details (find in SecOps Settings > SIEM Settings)
+# SecOps instance details
 SECOPS_PROJECT_ID="${PROJECT_ID}"
 SECOPS_CUSTOMER_ID="${SECOPS_CUSTOMER_ID:-your-customer-id}"
 SECOPS_REGION="${SECOPS_REGION:-us}"
@@ -52,7 +51,7 @@ err()  { echo -e "${RED}[-]${NC} $1"; exit 1; }
 
 echo -e "${CYAN}"
 echo "═══════════════════════════════════════════════════════════"
-echo "  Google-Native MCP Server — Deployment"
+echo "  Google-Native MCP Server (TypeScript) — Deployment"
 echo "═══════════════════════════════════════════════════════════"
 echo -e "${NC}"
 
@@ -61,13 +60,12 @@ log "Region:  ${REGION}"
 log "Service: ${SERVICE_NAME}"
 echo ""
 
-# Verify gcloud is authenticated
 gcloud projects describe "${PROJECT_ID}" > /dev/null 2>&1 || \
     err "Cannot access project ${PROJECT_ID}. Run: gcloud auth login && gcloud config set project ${PROJECT_ID}"
 
 # ─── STEP 1: ENABLE REQUIRED APIS ────────────────────────────
 
-log "Enabling required GCP APIs..."
+log "Enabling required GCP APIs for 100+ tools..."
 gcloud services enable \
     run.googleapis.com \
     cloudbuild.googleapis.com \
@@ -76,6 +74,10 @@ gcloud services enable \
     logging.googleapis.com \
     aiplatform.googleapis.com \
     chronicle.googleapis.com \
+    cloudbilling.googleapis.com \
+    monitoring.googleapis.com \
+    cloudresourcemanager.googleapis.com \
+    iam.googleapis.com \
     --project="${PROJECT_ID}" \
     --quiet
 
@@ -99,6 +101,10 @@ ROLES=(
     "roles/securitycenter.findingsViewer"
     "roles/logging.viewer"
     "roles/aiplatform.user"
+    "roles/billing.viewer"
+    "roles/monitoring.viewer"
+    "roles/resourcemanager.organizationViewer"
+    "roles/iam.securityReviewer"
 )
 
 for ROLE in "${ROLES[@]}"; do
@@ -136,7 +142,7 @@ fi
 
 # ─── STEP 5: BUILD CONTAINER ─────────────────────────────────
 
-log "Building Docker container via Cloud Build..."
+log "Building Docker container via Cloud Build (Node/TS environment)..."
 gcloud builds submit \
     --tag "${IMAGE_URL}" \
     --project="${PROJECT_ID}" \
@@ -146,7 +152,6 @@ gcloud builds submit \
 
 log "Deploying to Cloud Run..."
 
-# Build the deploy command
 DEPLOY_CMD="gcloud run deploy ${SERVICE_NAME} \
     --image ${IMAGE_URL} \
     --region ${REGION} \
@@ -161,7 +166,6 @@ DEPLOY_CMD="gcloud run deploy ${SERVICE_NAME} \
     --project=${PROJECT_ID} \
     --quiet"
 
-# Add GTI secret if it exists
 if gcloud secrets describe "gti-api-key" --project="${PROJECT_ID}" > /dev/null 2>&1; then
     DEPLOY_CMD="${DEPLOY_CMD} --set-secrets=GTI_API_KEY=gti-api-key:latest"
 fi
@@ -183,6 +187,7 @@ echo ""
 echo -e "  Service URL:  ${GREEN}${SERVICE_URL}${NC}"
 echo -e "  Health Check: ${GREEN}${SERVICE_URL}/health${NC}"
 echo -e "  SSE Endpoint: ${GREEN}${SERVICE_URL}/sse${NC}"
+echo -e "  Web Chat UI:  ${GREEN}${SERVICE_URL}/${NC}"
 echo ""
 echo -e "  ${YELLOW}Note: --no-allow-unauthenticated is set.${NC}"
 echo -e "  ${YELLOW}Callers need roles/run.invoker or a valid ID token.${NC}"

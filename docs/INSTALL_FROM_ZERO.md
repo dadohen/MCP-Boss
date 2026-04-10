@@ -175,6 +175,10 @@ Turn them all on with one command:
 gcloud services enable \
     run.googleapis.com \
     cloudbuild.googleapis.com \
+    cloudbilling.googleapis.com \
+    monitoring.googleapis.com \
+    cloudresourcemanager.googleapis.com \
+    iam.googleapis.com \
     secretmanager.googleapis.com \
     securitycenter.googleapis.com \
     logging.googleapis.com \
@@ -197,7 +201,7 @@ Your server needs an identity to talk to Google's APIs. In Google Cloud, that id
 ### Create it:
 
 ```bash
-gcloud iam service-accounts create native-mcp-sa \
+gcloud iam service-accounts create mcp-boss-sa \
     --display-name="MCP Server Service Account"
 ```
 
@@ -209,7 +213,7 @@ Now we tell Google what this service account is allowed to do. We're giving it *
 
 ```bash
 PROJECT_ID=$(gcloud config get-value project)
-SA_EMAIL="native-mcp-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+SA_EMAIL="mcp-boss-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Permission to read SecOps data (UDM search, detections, rules)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
@@ -230,6 +234,25 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/aiplatform.user" --quiet
+
+# Permission to read Billing data
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/billing.viewer" --quiet
+
+# Permission to read Monitoring metrics
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/monitoring.viewer" --quiet
+
+# Permission to read IAM policies and resources
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/iam.securityReviewer" --quiet
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/resourcemanager.organizationViewer" --quiet
 ```
 
 **What each permission does:**
@@ -308,7 +331,7 @@ When you deploy to Cloud Run in Step 8, you tell Cloud Run to use the service ac
 
 ```bash
 gcloud iam service-accounts add-iam-policy-binding \
-    native-mcp-sa@${PROJECT_ID}.iam.gserviceaccount.com \
+    mcp-boss-sa@${PROJECT_ID}.iam.gserviceaccount.com \
     --member="user:${MY_EMAIL}" \
     --role="roles/iam.serviceAccountUser"
 ```
@@ -342,7 +365,7 @@ Now let the service account read the secret:
 
 ```bash
 PROJECT_ID=$(gcloud config get-value project)
-SA_EMAIL="native-mcp-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+SA_EMAIL="mcp-boss-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
 gcloud secrets add-iam-policy-binding gti-api-key \
     --member="serviceAccount:${SA_EMAIL}" \
@@ -398,7 +421,7 @@ gcloud artifacts repositories create mcp-server \
 Now build the container:
 
 ```bash
-gcloud builds submit --tag us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest
+gcloud builds submit --tag us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/mcp-boss-ts:latest
 ```
 
 **What happens:**
@@ -428,12 +451,12 @@ This is the big moment. This command takes the container you just built and runs
 
 ```bash
 PROJECT_ID=$(gcloud config get-value project)
-SA_EMAIL="native-mcp-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+SA_EMAIL="mcp-boss-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 SECOPS_CUSTOMER_ID="PASTE_YOUR_CUSTOMER_ID_HERE"
 SECOPS_REGION="us"
 
-gcloud run deploy google-native-mcp \
-    --image us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest \
+gcloud run deploy mcp-boss-ts \
+    --image us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/mcp-boss-ts:latest \
     --region us-central1 \
     --service-account ${SA_EMAIL} \
     --no-allow-unauthenticated \
@@ -466,8 +489,8 @@ gcloud run deploy google-native-mcp \
 **What happens:** Google creates your Cloud Run service and gives you a URL. You'll see:
 
 ```
-Service [google-native-mcp] revision [google-native-mcp-00001-abc] has been deployed
-Service URL: https://google-native-mcp-abc123-uc.a.run.app
+Service [mcp-boss-ts] revision [mcp-boss-ts-00001-abc] has been deployed
+Service URL: https://mcp-boss-ts-abc123-uc.a.run.app
 ```
 
 🎉 **That URL is your MCP server.** Copy it. Save it. Bookmark it.
@@ -479,7 +502,7 @@ Service URL: https://google-native-mcp-abc123-uc.a.run.app
 If you stored a VT API key in Step 5, connect it to your running server:
 
 ```bash
-gcloud run services update google-native-mcp \
+gcloud run services update mcp-boss-ts \
     --region us-central1 \
     --set-secrets="GTI_API_KEY=gti-api-key:latest"
 ```
@@ -493,7 +516,7 @@ Skipped Step 5? Skip this step too.
 Let's make sure everything works.
 
 ```bash
-SERVICE_URL=$(gcloud run services describe google-native-mcp \
+SERVICE_URL=$(gcloud run services describe mcp-boss-ts \
     --region us-central1 \
     --format="value(status.url)")
 
@@ -506,7 +529,7 @@ curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
 ```json
 {
     "status": "healthy",
-    "server": "google-native-mcp",
+    "server": "mcp-boss-ts",
     "version": "2.0.0",
     "tools": 22,
     "project": "secops-mcp",
@@ -524,7 +547,7 @@ curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
 
 **What this means:**
 - `"status": "healthy"` → ✅ Your server is running!
-- `"tools": 22` → ✅ All 22 security tools are loaded
+- `"tools": 22` → ✅ All 100 security tools are loaded
 - `"gti": true` → ✅ VirusTotal integration is working (false if you skipped Step 5)
 - `"o365": false` → That's fine — you haven't configured O365 integration yet
 - Other `false` values → Also fine — those integrations are optional
@@ -537,19 +560,19 @@ Your autonomous security operations server is live on Google Cloud. It costs $0 
 
 ## Step 11: Connect an AI to Your Server
 
-Your server is running, but it's just sitting there waiting. You need to connect an AI client to actually use the 22 tools.
+Your server is running, but it's just sitting there waiting. You need to connect an AI client to actually use the 100 tools.
 
 ### Option A: Claude Code (If You Use Claude)
 
 ```bash
-SERVICE_URL=$(gcloud run services describe google-native-mcp \
+SERVICE_URL=$(gcloud run services describe mcp-boss-ts \
     --region us-central1 \
     --format="value(status.url)")
 
 claude mcp add google-security --transport sse ${SERVICE_URL}/sse
 ```
 
-Now every time you use Claude Code, it can access all 22 security tools.
+Now every time you use Claude Code, it can access all 100 security tools.
 
 ### Option B: Any MCP-Compatible Client
 
@@ -578,7 +601,7 @@ Want to see your server in a web browser instead of the terminal?
 
 1. Go to **https://console.cloud.google.com/run**
 2. Make sure your project is selected at the top
-3. You'll see `google-native-mcp` in the list
+3. You'll see `mcp-boss-ts` in the list
 4. Click on it to see:
    - The URL
    - How many requests it's handling
@@ -596,9 +619,9 @@ cd ~/Desktop/Google-Native-MCP-Server    # or wherever you downloaded it
 git pull                                   # get the latest code
 
 PROJECT_ID=$(gcloud config get-value project)
-gcloud builds submit --tag us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest
-gcloud run deploy google-native-mcp \
-    --image us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest \
+gcloud builds submit --tag us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/mcp-boss-ts:latest
+gcloud run deploy mcp-boss-ts \
+    --image us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/mcp-boss-ts:latest \
     --region us-central1
 ```
 
@@ -614,10 +637,10 @@ If you want to remove the server completely:
 PROJECT_ID=$(gcloud config get-value project)
 
 # Delete the Cloud Run service
-gcloud run services delete google-native-mcp --region us-central1 --quiet
+gcloud run services delete mcp-boss-ts --region us-central1 --quiet
 
 # Delete the service account
-gcloud iam service-accounts delete native-mcp-sa@${PROJECT_ID}.iam.gserviceaccount.com --quiet
+gcloud iam service-accounts delete mcp-boss-sa@${PROJECT_ID}.iam.gserviceaccount.com --quiet
 
 # Delete the VT API key secret (if you created one)
 gcloud secrets delete gti-api-key --quiet
@@ -661,7 +684,7 @@ The server might be sleeping (min-instances = 0). The first request takes 2–3 
 
 ### I changed my SecOps Customer ID and need to update
 ```bash
-gcloud run services update google-native-mcp \
+gcloud run services update mcp-boss-ts \
     --region us-central1 \
     --set-env-vars="SECOPS_CUSTOMER_ID=your-new-customer-id"
 ```
@@ -683,19 +706,19 @@ cd Google-Native-MCP-Server
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com securitycenter.googleapis.com logging.googleapis.com aiplatform.googleapis.com chronicle.googleapis.com
 
 # Service account
-gcloud iam service-accounts create native-mcp-sa --display-name="MCP Server"
+gcloud iam service-accounts create mcp-boss-sa --display-name="MCP Server"
 PROJECT_ID=$(gcloud config get-value project)
-SA_EMAIL="native-mcp-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+SA_EMAIL="mcp-boss-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 for ROLE in roles/chronicle.viewer roles/securitycenter.findingsViewer roles/logging.viewer roles/aiplatform.user; do
     gcloud projects add-iam-policy-binding $PROJECT_ID --member="serviceAccount:${SA_EMAIL}" --role="$ROLE" --quiet
 done
 
 # Create container registry + Build + Deploy
 gcloud artifacts repositories create mcp-server --repository-format=docker --location=us-central1 --project=${PROJECT_ID} 2>/dev/null
-gcloud builds submit --tag us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest
-gcloud run deploy google-native-mcp --image us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/google-native-mcp:latest --region us-central1 --service-account ${SA_EMAIL} --no-allow-unauthenticated --memory 512Mi --set-env-vars="SECOPS_PROJECT_ID=${PROJECT_ID},SECOPS_CUSTOMER_ID=YOUR_CUSTOMER_ID,SECOPS_REGION=us" --quiet
+gcloud builds submit --tag us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/mcp-boss-ts:latest
+gcloud run deploy mcp-boss-ts --image us-central1-docker.pkg.dev/${PROJECT_ID}/mcp-server/mcp-boss-ts:latest --region us-central1 --service-account ${SA_EMAIL} --no-allow-unauthenticated --memory 512Mi --set-env-vars="SECOPS_PROJECT_ID=${PROJECT_ID},SECOPS_CUSTOMER_ID=YOUR_CUSTOMER_ID,SECOPS_REGION=us" --quiet
 
 # Test
-SERVICE_URL=$(gcloud run services describe google-native-mcp --region us-central1 --format="value(status.url)")
+SERVICE_URL=$(gcloud run services describe mcp-boss-ts --region us-central1 --format="value(status.url)")
 curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" ${SERVICE_URL}/health
 ```

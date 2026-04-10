@@ -77,8 +77,8 @@ Follow the detailed instructions below.
 # Set variables (edit these)
 export PROJECT_ID="your-project-id"
 export REGION="us-central1"
-export SERVICE_NAME="google-native-mcp"
-export SA_NAME="native-mcp-sa"
+export SERVICE_NAME="mcp-boss-ts"
+export SA_NAME="mcp-boss-sa"
 export SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Your SecOps instance details
@@ -99,6 +99,10 @@ export SECOPS_REGION="us"                         # us, europe, or asia
 gcloud services enable \
     run.googleapis.com \
     cloudbuild.googleapis.com \
+    cloudbilling.googleapis.com \
+    monitoring.googleapis.com \
+    cloudresourcemanager.googleapis.com \
+    iam.googleapis.com \
     secretmanager.googleapis.com \
     securitycenter.googleapis.com \
     logging.googleapis.com \
@@ -120,7 +124,11 @@ for ROLE in \
     roles/chronicle.viewer \
     roles/securitycenter.findingsViewer \
     roles/logging.viewer \
-    roles/aiplatform.user; do
+    roles/aiplatform.user \
+    roles/billing.viewer \
+    roles/monitoring.viewer \
+    roles/resourcemanager.organizationViewer \
+    roles/iam.securityReviewer; do
     gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
         --member="serviceAccount:${SA_EMAIL}" \
         --role="${ROLE}" \
@@ -221,7 +229,7 @@ curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
 ```json
 {
     "status": "healthy",
-    "server": "google-native-mcp",
+    "server": "mcp-boss-ts",
     "project": "your-project-id",
     "region": "us",
     "gti_configured": true,
@@ -246,10 +254,10 @@ export SECOPS_REGION="us"
 export GTI_API_KEY="your-vt-api-key"  # optional
 
 # 3. Install dependencies
-pip install -r requirements.txt
+pnpm install
 
 # 4. Run the server
-python3 main.py
+pnpm run dev
 
 # 5. Test health check
 curl http://localhost:8080/health
