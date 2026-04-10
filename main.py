@@ -1423,7 +1423,7 @@ def get_security_alerts(hours_back: int = 24, max_alerts: int = 10, limit: int =
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        result = chronicle.get_alerts(start_time=start_dt, end_time=now, page_size=alert_limit)
+        result = chronicle.get_alerts(start_time=start_dt, end_time=now, max_alerts=alert_limit)
         alerts = result.get('alerts', []) if isinstance(result, dict) else (result if isinstance(result, list) else [])
         formatted = []
         for a in alerts[:alert_limit]:
@@ -1449,27 +1449,35 @@ def lookup_entity(entity_value: str = "", entity: str = "", value: str = "", hou
             return json.dumps({"error": "Entity value is required"})
         hours_back = min(max(1, hours_back), 8760)
         now = datetime.now(timezone.utc)
-        start = (now - timedelta(hours=hours_back)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        end = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-        resp = requests.get(
-            f"{SECOPS_BASE_URL}/entities:lookup",
-            headers=_secops_headers(),
-            params={"entityValue": entity_value, "startTime": start, "endTime": end},
-            timeout=30,
+        start_dt = now - timedelta(hours=hours_back)
+        client = SecOpsClient()
+        chronicle = client.chronicle(
+            customer_id=SECOPS_CUSTOMER_ID,
+            project_id=SECOPS_PROJECT_ID,
+            region=SECOPS_REGION
         )
-        if resp.status_code == 200:
-            data = resp.json()
+        try:
+            summary = chronicle.summarize_entity(
+                value=entity_value.strip(),
+                start_time=start_dt,
+                end_time=now,
+                page_size=100
+            )
+            # Convert EntitySummary to dict
             result = {
                 "entity": entity_value,
-                "risk_score": data.get("riskScore", data.get("entity", {}).get("riskScore", "N/A")),
-                "first_seen": data.get("firstSeen", ""),
-                "last_seen": data.get("lastSeen", ""),
-                "alerts": data.get("alerts", []),
-                "alert_count": len(data.get("alerts", [])),
-                "entity_metadata": data.get("entity", data.get("metadata", {})),
+                "summary": str(summary) if not isinstance(summary, dict) else summary,
             }
+            # Try to extract useful fields
+            if hasattr(summary, '__dict__'):
+                result["summary"] = {k: str(v)[:1000] for k, v in summary.__dict__.items() if not k.startswith('_')}
             return json.dumps(result)
-        return json.dumps({"error": f"Entity lookup [{resp.status_code}]", "detail": resp.text[:500]})
+        except Exception as e_summary:
+            # Fallback: search UDM for entity activity
+            udm_query = f'principal.ip = "{entity_value}" OR target.ip = "{entity_value}" OR principal.hostname = "{entity_value}" OR target.hostname = "{entity_value}" OR principal.user.userid = "{entity_value}" OR target.user.userid = "{entity_value}"'
+            result = chronicle.search_udm(query=udm_query, start_time=start_dt, end_time=now, max_events=50)
+            events = result.get('events', []) if isinstance(result, dict) else (result if isinstance(result, list) else [])
+            return json.dumps({"entity": entity_value, "event_count": len(events), "events": events[:10], "source": "udm_search", "summarize_error": str(e_summary)[:200]})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -2305,7 +2313,7 @@ def list_rule_errors(rule_id: str = "") -> str:
 
 
 @app_mcp.tool()
-def list_case_comments(case_id: str = "", page_size: int = 50) -> str:
+def list_case_comments(case_id = "", page_size: int = 50) -> str:
     """List all comments for a SOAR case with full history and filtering support."""
     try:
         case_id = str(case_id) if case_id else ""
