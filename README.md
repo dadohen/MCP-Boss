@@ -16,8 +16,14 @@ curl -sL https://raw.githubusercontent.com/dnehoda-source/MCP-Boss/main/setup.sh
   --gti-key your-vt-api-key
 ```
 
-### Or open in Cloud Shell:
+### Or deploy from Google Cloud Shell:
 [![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/dnehoda-source/MCP-Boss.git&shellonly=true&cloudshell_workspace=MCP-Boss)
+
+After Cloud Shell opens, run in the terminal:
+```bash
+chmod +x setup.sh && ./setup.sh
+```
+The wizard will walk you through project ID, customer ID, and deploy everything.
 
 ### Or step by step:
 ```bash
