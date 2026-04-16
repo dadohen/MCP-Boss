@@ -3503,23 +3503,68 @@ def secops_get_case(case_id: str) -> str:
 
 
 @app_mcp.tool()
-def secops_update_case(case_id: str, priority: str = "", status: str = "", comment: str = "") -> str:
-    """Update a SOAR case priority, status, or add a comment."""
+def secops_update_case(case_id: str, priority: str = "", status: str = "", description: str = "", comment: str = "") -> str:
+    """
+    Update a SOAR case — change priority, status, description, or add investigation notes.
+    Uses the v1alpha REST API directly for reliable updates.
+
+    Args:
+        case_id:      Case number (e.g., "5012")
+        priority:     New priority (CRITICAL, HIGH, MEDIUM, LOW)
+        status:       New status (OPENED, CLOSED)
+        description:  Update the case description/notes with investigation findings
+        comment:      Text to add (written to description if comment API unavailable)
+    """
     try:
         if not case_id:
             return json.dumps({"error": "case_id is required"})
-        client = SecOpsClient()
-        chronicle = client.chronicle(customer_id=SECOPS_CUSTOMER_ID, project_id=SECOPS_PROJECT_ID, region=SECOPS_REGION)
-        patch = {}
+        token = get_adc_token()
+        base = (
+            f"https://{SECOPS_REGION}-chronicle.googleapis.com/v1alpha"
+            f"/projects/{SECOPS_PROJECT_ID}/locations/{SECOPS_REGION}"
+            f"/instances/{SECOPS_CUSTOMER_ID}"
+        )
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        results = []
+
         if priority:
-            patch["priority"] = priority.upper()
+            p = priority.upper()
+            if not p.startswith("PRIORITY_"):
+                p = f"PRIORITY_{p}"
+            resp = requests.patch(
+                f"{base}/cases/{case_id}",
+                headers=headers,
+                json={"priority": p},
+                params={"updateMask": "priority"},
+                timeout=15,
+            )
+            results.append(f"priority→{p}: {resp.status_code}")
+
         if status:
-            patch["status"] = status.upper()
-        if patch:
-            result = chronicle.patch_case(case_id, patch)
-        else:
-            result = {"note": "No fields to update"}
-        return json.dumps({"status": "updated", "case_id": case_id, "result": result})
+            resp = requests.patch(
+                f"{base}/cases/{case_id}",
+                headers=headers,
+                json={"status": status.upper()},
+                params={"updateMask": "status"},
+                timeout=15,
+            )
+            results.append(f"status→{status.upper()}: {resp.status_code}")
+
+        desc_text = description or comment
+        if desc_text:
+            resp = requests.patch(
+                f"{base}/cases/{case_id}",
+                headers=headers,
+                json={"description": desc_text},
+                params={"updateMask": "description"},
+                timeout=15,
+            )
+            results.append(f"description: {resp.status_code}")
+
+        if not results:
+            return json.dumps({"note": "No fields to update. Provide priority, status, description, or comment."})
+
+        return json.dumps({"status": "updated", "case_id": case_id, "actions": results})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
