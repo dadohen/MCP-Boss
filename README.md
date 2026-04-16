@@ -125,7 +125,21 @@ gcloud run services add-iam-policy-binding mcp-boss \
   --region=us-central1
 ```
 
-Users authenticate via `gcloud auth print-identity-token` or Google Cloud Proxy.
+**How to access after locking down:**
+
+```bash
+# From browser — use Cloud Run Proxy:
+gcloud run services proxy mcp-boss --project=$PROJECT_ID --region=us-central1
+# Opens http://localhost:8080 → authenticated tunnel to your service
+
+# From curl/API:
+TOKEN=$(gcloud auth print-identity-token)
+curl -H "Authorization: Bearer $TOKEN" https://YOUR-SERVICE-URL/health
+
+# From Gemini CLI:
+TOKEN=$(gcloud auth print-identity-token)
+gemini --tool-endpoint https://YOUR-SERVICE-URL/mcp --headers "Authorization=Bearer $TOKEN"
+```
 
 ### Option 2: VPC-Only (Internal Network)
 
@@ -139,6 +153,16 @@ gcloud run services update mcp-boss \
 ```
 
 Only accessible from within your VPC, VPN, or Cloud Interconnect.
+
+**How to access:**
+```bash
+# From your local machine via Cloud Run Proxy (tunnels through IAM):
+gcloud run services proxy mcp-boss --project=$PROJECT_ID --region=us-central1
+# Opens http://localhost:8080 locally
+
+# Or from a GCE VM / GKE pod inside the VPC:
+curl https://YOUR-SERVICE-URL/health
+```
 
 ### Option 3: IAP (Identity-Aware Proxy)
 
@@ -160,7 +184,9 @@ gcloud iap web add-iam-policy-binding \
   --project=$PROJECT_ID
 ```
 
-Users get a Google login prompt before reaching the Web UI.
+Users get a Google login prompt in the browser before reaching the Web UI. No code changes needed — IAP handles everything.
+
+**How to access:** Just open the URL in a browser. IAP shows a Google login page. After sign-in, you're through to the Web UI.
 
 ### Option 4: API Key Header
 
@@ -173,7 +199,19 @@ gcloud run services update mcp-boss \
   --region=us-central1
 ```
 
-Clients pass `X-API-Key: your-secret-key-here` header. (Built-in support — the server validates this automatically when `MCP_BOSS_API_KEY` is set.)
+**How to access:**
+```bash
+# curl:
+curl -H "X-API-Key: your-secret-key-here" https://YOUR-SERVICE-URL/health
+
+# Gemini CLI:
+gemini --tool-endpoint https://YOUR-SERVICE-URL/mcp --headers "X-API-Key=your-secret-key-here"
+
+# Web UI: Add ?key=your-secret-key-here to the URL
+# Or the Web UI will prompt for it on first load
+```
+
+The server validates this automatically when `MCP_BOSS_API_KEY` is set.
 
 ### Security Best Practices
 
