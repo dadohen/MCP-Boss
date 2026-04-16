@@ -94,6 +94,101 @@ All automatic, up to 20 chained tool calls in a single request.
 
 ---
 
+## Security
+
+MCP Boss handles sensitive security data. Here's how to lock it down:
+
+### Option 1: IAM Authentication (Recommended)
+
+Remove public access and require Google Cloud IAM authentication:
+
+```bash
+# Remove unauthenticated access
+gcloud run services remove-iam-policy-binding mcp-boss \
+  --member="allUsers" \
+  --role="roles/run.invoker" \
+  --project=$PROJECT_ID \
+  --region=us-central1
+
+# Grant access to specific users only
+gcloud run services add-iam-policy-binding mcp-boss \
+  --member="user:analyst@yourcompany.com" \
+  --role="roles/run.invoker" \
+  --project=$PROJECT_ID \
+  --region=us-central1
+
+# Grant access to a Google Group (for SOC team)
+gcloud run services add-iam-policy-binding mcp-boss \
+  --member="group:soc-team@yourcompany.com" \
+  --role="roles/run.invoker" \
+  --project=$PROJECT_ID \
+  --region=us-central1
+```
+
+Users authenticate via `gcloud auth print-identity-token` or Google Cloud Proxy.
+
+### Option 2: VPC-Only (Internal Network)
+
+Restrict to your VPC — no public internet access at all:
+
+```bash
+gcloud run services update mcp-boss \
+  --ingress=internal \
+  --project=$PROJECT_ID \
+  --region=us-central1
+```
+
+Only accessible from within your VPC, VPN, or Cloud Interconnect.
+
+### Option 3: IAP (Identity-Aware Proxy)
+
+Put Cloud IAP in front for browser-based SSO with your corporate identity provider:
+
+```bash
+# Enable IAP on the Cloud Run service
+gcloud iap web enable \
+  --resource-type=cloud-run \
+  --service=mcp-boss \
+  --project=$PROJECT_ID
+
+# Grant access to your SOC team
+gcloud iap web add-iam-policy-binding \
+  --resource-type=cloud-run \
+  --service=mcp-boss \
+  --member="group:soc-team@yourcompany.com" \
+  --role="roles/iap.httpsResourceAccessor" \
+  --project=$PROJECT_ID
+```
+
+Users get a Google login prompt before reaching the Web UI.
+
+### Option 4: API Key Header
+
+For quick protection, set an API key environment variable and validate in requests:
+
+```bash
+gcloud run services update mcp-boss \
+  --set-env-vars="MCP_BOSS_API_KEY=your-secret-key-here" \
+  --project=$PROJECT_ID \
+  --region=us-central1
+```
+
+Clients pass `X-API-Key: your-secret-key-here` header. (Built-in support — the server validates this automatically when `MCP_BOSS_API_KEY` is set.)
+
+### Security Best Practices
+
+| Practice | How |
+|----------|-----|
+| **No public access** | Remove `allUsers` invoker binding |
+| **Least privilege SA** | Use dedicated `mcp-boss` service account, not default compute SA |
+| **Secret Manager** | Store API keys (GTI, Okta, AWS, etc.) in Secret Manager, not env vars |
+| **Audit logging** | Cloud Run request logs are automatic; enable Data Access audit logs |
+| **VPC SC** | Place the project in a VPC Service Controls perimeter |
+| **Containment approval** | Add approval workflows before destructive containment actions |
+| **Network** | Use `--ingress=internal` + Cloud VPN/Interconnect for production |
+
+---
+
 ## Manual Setup Guide
 
 If you prefer to set things up manually instead of using `setup.sh`:
