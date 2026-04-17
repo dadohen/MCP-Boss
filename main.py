@@ -1608,48 +1608,120 @@ def get_ip_report(ip_address: str = "", ip: str = "", address: str = "", host: s
 
 
 @app_mcp.tool()
-def search_threat_actors(query: str = "", actor_query: str = "", threat_actor_query: str = "", limit: int = 10) -> str:
-    """Search for threat actor profiles in VirusTotal/GTI intelligence. Returns matching threat actor names, descriptions, and associated indicators."""
+def search_threat_actors(query: str = "", actor_query: str = "", threat_actor_query: str = "", limit: int = 10, days_back: int = 90) -> str:
+    """Search for threat actor profiles and IOCs in Google Threat Intelligence (Mandiant/SecOps). Returns matching IOCs with Mandiant attribution, threat actor associations, and indicators."""
     try:
         final_query = query or actor_query or threat_actor_query
         if not final_query or len(final_query.strip()) < 2:
             return json.dumps({"error": "Query too short"})
-        if not GTI_API_KEY:
-            return json.dumps({"error": "GTI_API_KEY not configured"})
-        limit = min(max(1, limit), 50)
-        resp = requests.get(
-            f"https://www.virustotal.com/api/v3/threat_actors",
-            headers={"x-apikey": GTI_API_KEY},
-            params={"filter": final_query, "limit": limit},
-            timeout=30,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            actors = []
-            for item in data.get("data", [])[:limit]:
-                attrs = item.get("attributes", {})
-                actors.append({
-                    "id": item.get("id", ""),
-                    "name": attrs.get("name", attrs.get("meaningful_name", "")),
-                    "description": (attrs.get("description", "") or "")[:500],
-                    "aliases": attrs.get("aliases", []),
-                    "targeted_industries": attrs.get("targeted_industries", []),
-                    "targeted_countries": attrs.get("targeted_countries", []),
-                    "source_region": attrs.get("source_region", ""),
+        limit = min(max(1, limit), 200)
+        days_back = min(max(1, days_back), 365)
+
+        # Primary: Use SecOps SDK list_iocs with Mandiant attributes (enterprise GTI)
+        try:
+            client = SecOpsClient()
+            chronicle = client.chronicle(
+                customer_id=SECOPS_CUSTOMER_ID,
+                project_id=SECOPS_PROJECT_ID,
+                region=SECOPS_REGION
+            )
+            end_dt = datetime.now(timezone.utc)
+            start_dt = end_dt - timedelta(days=days_back)
+            ioc_result = chronicle.list_iocs(
+                start_time=start_dt,
+                end_time=end_dt,
+                max_matches=limit,
+                add_mandiant_attributes=True,
+                prioritized_only=False
+            )
+            # Filter IOCs related to the queried threat actor
+            query_lower = final_query.lower()
+            query_aliases = {query_lower}
+            # Common APT aliases
+            apt_aliases = {
+                "apt28": ["fancy bear", "strontium", "sofacy", "pawn storm", "sednit", "forest blizzard"],
+                "apt29": ["cozy bear", "nobelium", "midnight blizzard", "the dukes"],
+                "apt43": ["kimsuky", "velvet chollima", "thallium", "emerald sleet"],
+                "apt41": ["double dragon", "barium", "winnti"],
+                "apt1": ["comment crew", "comment panda"],
+                "lazarus": ["hidden cobra", "apt38", "labyrinth chollima"],
+                "fancy bear": ["apt28", "strontium", "sofacy", "pawn storm", "sednit", "forest blizzard"],
+                "cozy bear": ["apt29", "nobelium", "midnight blizzard"],
+                "kimsuky": ["apt43", "velvet chollima", "thallium"],
+            }
+            for alias_key, alias_list in apt_aliases.items():
+                if query_lower in alias_key or alias_key in query_lower:
+                    query_aliases.update(alias_list)
+                for a in alias_list:
+                    if query_lower in a or a in query_lower:
+                        query_aliases.add(alias_key)
+                        query_aliases.update(alias_list)
+
+            matches = ioc_result.get("matches", ioc_result.get("response", {}).get("matches", []))
+            if isinstance(ioc_result, list):
+                matches = ioc_result
+
+            matched_iocs = []
+            for ioc in (matches if isinstance(matches, list) else []):
+                ioc_str = json.dumps(ioc).lower()
+                if any(alias in ioc_str for alias in query_aliases):
+                    matched_iocs.append(ioc)
+
+            if matched_iocs:
+                return json.dumps({
+                    "source": "SecOps/Mandiant GTI",
+                    "query": final_query,
+                    "aliases": list(query_aliases),
+                    "matched_iocs": matched_iocs[:limit],
+                    "total_iocs_scanned": len(matches) if isinstance(matches, list) else 0,
+                    "count": len(matched_iocs[:limit])
                 })
-            return json.dumps({"query": query, "threat_actors": actors, "count": len(actors)})
-        # Fallback to intelligence search
-        resp2 = requests.get(
-            "https://www.virustotal.com/api/v3/intelligence/search",
-            headers={"x-apikey": GTI_API_KEY},
-            params={"query": f'type:threat-actor "{final_query}"', "limit": limit},
-            timeout=30,
-        )
-        if resp2.status_code == 200:
-            data = resp2.json()
-            actors = [{"id": i.get("id"), "name": i.get("attributes", {}).get("name", i.get("id")), "type": i.get("type")} for i in data.get("data", [])[:limit]]
-            return json.dumps({"query": query, "threat_actors": actors, "count": len(actors)})
-        return json.dumps({"error": f"GTI search [{resp.status_code}]", "detail": resp.text[:300]})
+
+            # If no specific matches, return all IOCs with Mandiant attribution as context
+            all_iocs = []
+            for ioc in (matches if isinstance(matches, list) else [])[:limit]:
+                all_iocs.append(ioc)
+
+            return json.dumps({
+                "source": "SecOps/Mandiant GTI",
+                "query": final_query,
+                "aliases": list(query_aliases),
+                "note": f"No IOCs directly tagged to {final_query} found in last {days_back} days. Returning all active IOCs with Mandiant attributes for context.",
+                "iocs": all_iocs[:limit],
+                "count": len(all_iocs[:limit])
+            })
+        except Exception as e:
+            logger.warning(f"SecOps GTI lookup failed: {e}")
+
+        # Fallback: VT intelligence search for related files/indicators
+        if GTI_API_KEY:
+            resp = requests.get(
+                "https://www.virustotal.com/api/v3/intelligence/search",
+                headers={"x-apikey": GTI_API_KEY},
+                params={"query": f'"{final_query}"', "limit": min(limit, 20)},
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                indicators = []
+                for item in data.get("data", [])[:limit]:
+                    attrs = item.get("attributes", {})
+                    indicators.append({
+                        "id": item.get("id", ""),
+                        "type": item.get("type", ""),
+                        "name": attrs.get("meaningful_name", attrs.get("name", "")),
+                        "sha256": attrs.get("sha256", ""),
+                        "detection_ratio": f"{attrs.get('last_analysis_stats', {}).get('malicious', 0)}/{sum(attrs.get('last_analysis_stats', {}).values())}" if attrs.get("last_analysis_stats") else "",
+                        "tags": attrs.get("tags", [])[:10],
+                    })
+                return json.dumps({
+                    "source": "VirusTotal Intelligence",
+                    "query": final_query,
+                    "indicators": indicators,
+                    "count": len(indicators)
+                })
+
+        return json.dumps({"error": f"No threat intelligence found for '{final_query}'"})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -1797,8 +1869,8 @@ def list_cases() -> str:
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        result = chronicle.list_cases(page_size=100, order_by="createTime desc")
-        cases = result.get('cases', []) if isinstance(result, dict) else (result if isinstance(result, list) else [])
+        result = chronicle.list_cases(page_size=100, order_by="createTime desc", as_list=True)
+        cases = result if isinstance(result, list) else result.get('cases', []) if isinstance(result, dict) else []
         formatted = []
         for c in cases:
             c_dict = c if isinstance(c, dict) else {}
@@ -4738,9 +4810,13 @@ def get_last_cases(count: int = 5, n: int = 0, N: int = 0, num_cases: int = 0, l
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        result = chronicle.list_cases(page_size=count, order_by="createTime desc")
-        # Handle dict response with 'cases' key
-        cases = result.get('cases', []) if isinstance(result, dict) else result
+        # Fetch more cases than needed so we can sort and slice
+        fetch_size = max(count * 5, 50)
+        result = chronicle.list_cases(page_size=fetch_size, as_list=True)
+        cases = result if isinstance(result, list) else result.get('cases', []) if isinstance(result, dict) else []
+        # Sort by createTime descending (newest first)
+        cases.sort(key=lambda c: c.get('createTime', c.get('create_time', '')), reverse=True)
+        cases = cases[:count]
         return json.dumps({"count": len(cases), "cases": cases})
     except Exception as e:
         return json.dumps({"error": str(e)})
