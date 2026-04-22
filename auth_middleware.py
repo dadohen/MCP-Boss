@@ -129,21 +129,53 @@ def _allowed_emails() -> set:
     return {e.strip() for e in raw.split(",") if e.strip()}
 
 
+def _accepted_audiences(primary: str) -> List[str]:
+    """Primary client ID plus any extras from OAUTH_ADDITIONAL_AUDIENCES.
+
+    Lets CI / service-to-service callers present a token with aud=<service URL>
+    or aud=<gcloud default client> without losing the tight audience check for
+    browser flows. Every candidate still runs through signature verification
+    and the ALLOWED_EMAILS filter, so multi-audience does not relax auth; it
+    only widens which token shapes are accepted.
+    """
+    extras_raw = os.environ.get("OAUTH_ADDITIONAL_AUDIENCES", "")
+    extras = [a.strip() for a in extras_raw.split(",") if a.strip()]
+    seen: set = set()
+    out: List[str] = []
+    for a in [primary, *extras]:
+        if a and a not in seen:
+            seen.add(a)
+            out.append(a)
+    return out
+
+
 def verify_google_id_token(bearer: str, audience: str) -> Optional[Dict[str, str]]:
-    """Verify a Google OIDC ID token. Returns {'email': ..., 'sub': ...} or None."""
+    """Verify a Google OIDC ID token against the primary audience plus any
+    listed in OAUTH_ADDITIONAL_AUDIENCES. Returns {'email': ..., 'sub': ...}
+    on the first match, or None."""
     try:
         from google.oauth2 import id_token as gid
         from google.auth.transport import requests as gr
-
-        info = gid.verify_oauth2_token(bearer, gr.Request(), audience)
-        email = info.get("email", "")
-        sub = info.get("sub", "")
-        if not email:
-            return None
-        return {"email": email, "sub": sub}
     except Exception as exc:
-        logger.warning("ID token verification failed: %s", exc)
+        logger.warning("google-auth not available: %s", exc)
         return None
+
+    transport = gr.Request()
+    last_exc: Exception | None = None
+    for candidate in _accepted_audiences(audience):
+        try:
+            info = gid.verify_oauth2_token(bearer, transport, candidate)
+            email = info.get("email", "")
+            sub = info.get("sub", "")
+            if not email:
+                return None
+            return {"email": email, "sub": sub}
+        except Exception as exc:
+            last_exc = exc
+            continue
+    if last_exc is not None:
+        logger.warning("ID token verification failed against all audiences: %s", last_exc)
+    return None
 
 
 class AuthMiddleware:
