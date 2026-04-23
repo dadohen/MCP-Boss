@@ -3788,20 +3788,36 @@ def secops_list_cases(limit: int = 100) -> str:
         limit = min(max(1, limit), 1000)
         client = SecOpsClient()
         chronicle = client.chronicle(customer_id=SECOPS_CUSTOMER_ID, project_id=SECOPS_PROJECT_ID, region=SECOPS_REGION)
-        # Auto-paginate through all cases; the API ignores orderBy and
-        # returns the oldest slice when we cap page_size.
-        result = chronicle.list_cases(as_list=True)
-        cases = result if isinstance(result, list) else (result.get('cases', []) if isinstance(result, dict) else [])
+        cases: list = []
+        try:
+            from secops.chronicle.case import get_cases as _legacy_list_cases
+            page_token = None
+            pages = 0
+            while pages < 20:
+                resp = _legacy_list_cases(chronicle, page_size=1000, page_token=page_token)
+                batch = resp.get("cases") if isinstance(resp, dict) else None
+                if not batch:
+                    break
+                cases.extend(batch)
+                page_token = resp.get("nextPageToken")
+                pages += 1
+                if not page_token:
+                    break
+        except Exception as legacy_err:
+            logger.warning(f"legacyListCases failed, falling back: {legacy_err}")
+            result = chronicle.list_cases(as_list=True)
+            cases = result if isinstance(result, list) else (result.get('cases', []) if isinstance(result, dict) else [])
+
         def _k(c):
             ts = c.get("createTime") or c.get("updateTime") or ""
             try:
-                cid = int((c.get("name", "").rsplit("/", 1)[-1]) or 0)
+                cid = int((c.get("name", "").rsplit("/", 1)[-1]) or c.get("caseId") or 0)
             except Exception:
                 cid = 0
             return (ts, cid)
         cases.sort(key=_k, reverse=True)
-        cases = cases[:limit]
-        return json.dumps({"count": len(cases), "cases": cases, "total_seen": len(result or [])})
+        top = cases[:limit]
+        return json.dumps({"count": len(top), "cases": top, "total_seen": len(cases)})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -5240,23 +5256,41 @@ def get_last_cases(count: int = 5, n: int = 0, N: int = 0, num_cases: int = 0, l
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        # The v1beta /cases endpoint ignores orderBy on this tenant and
-        # returns an ascending slice when we ask for one page, so we auto-
-        # paginate through ALL cases (as_list with no page_size triggers
-        # SDK-level pagination), then sort newest-first by createTime and
-        # numeric case ID.
-        result = chronicle.list_cases(as_list=True)
-        cases = result if isinstance(result, list) else []
+        # v1beta /cases caps at ~4400 cases on this tenant and excludes newer
+        # ones. The legacy:legacyListCases v1alpha endpoint is what the SOAR
+        # UI actually uses and returns every case. Page through it manually
+        # and stop as soon as we have enough for the requested count.
+        cases: list = []
+        try:
+            from secops.chronicle.case import get_cases as _legacy_list_cases
+            page_token = None
+            pages = 0
+            while pages < 20:  # hard safety cap
+                resp = _legacy_list_cases(chronicle, page_size=1000, page_token=page_token)
+                batch = resp.get("cases") if isinstance(resp, dict) else None
+                if not batch:
+                    break
+                cases.extend(batch)
+                page_token = resp.get("nextPageToken")
+                pages += 1
+                if not page_token:
+                    break
+        except Exception as legacy_err:
+            # Fall back to list_cases if the legacy endpoint is unavailable.
+            logger.warning(f"legacyListCases failed, falling back: {legacy_err}")
+            result = chronicle.list_cases(as_list=True)
+            cases = result if isinstance(result, list) else []
+
         def _case_sort_key(c):
             ts = c.get("createTime") or c.get("updateTime") or ""
             try:
-                cid = int((c.get("name", "").rsplit("/", 1)[-1]) or 0)
+                cid = int((c.get("name", "").rsplit("/", 1)[-1]) or c.get("caseId") or 0)
             except Exception:
                 cid = 0
             return (ts, cid)
         cases.sort(key=_case_sort_key, reverse=True)
-        cases = cases[:count]
-        return json.dumps({"count": len(cases), "cases": cases, "total_seen": len(result or [])})
+        top = cases[:count]
+        return json.dumps({"count": len(top), "cases": top, "total_seen": len(cases)})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
