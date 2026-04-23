@@ -1944,7 +1944,9 @@ def list_cases() -> str:
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        result = chronicle.list_cases(page_size=500, as_list=True)
+        # Auto-paginate; page_size limit alone makes the API return the
+        # oldest slice on this tenant.
+        result = chronicle.list_cases(as_list=True)
         cases = result if isinstance(result, list) else result.get('cases', []) if isinstance(result, dict) else []
         # Sort newest-first locally; the API's orderBy is ignored on this tenant.
         def _k(c):
@@ -3707,14 +3709,14 @@ def _call_mcp_server(mcp_url: str, tool_name: str, arguments: dict) -> str:
 
 @app_mcp.tool()
 def secops_list_cases(limit: int = 100) -> str:
-    """List all SOAR cases, newest first. Returns case IDs, titles, and statuses."""
+    """List SOAR cases (newest first). Returns case IDs, titles, and statuses."""
     try:
         limit = min(max(1, limit), 1000)
         client = SecOpsClient()
         chronicle = client.chronicle(customer_id=SECOPS_CUSTOMER_ID, project_id=SECOPS_PROJECT_ID, region=SECOPS_REGION)
-        # Pull at least 500 so local sort picks the truly newest cases.
-        fetch_size = max(limit, 500)
-        result = chronicle.list_cases(page_size=fetch_size, as_list=True)
+        # Auto-paginate through all cases; the API ignores orderBy and
+        # returns the oldest slice when we cap page_size.
+        result = chronicle.list_cases(as_list=True)
         cases = result if isinstance(result, list) else (result.get('cases', []) if isinstance(result, dict) else [])
         def _k(c):
             ts = c.get("createTime") or c.get("updateTime") or ""
@@ -3725,7 +3727,7 @@ def secops_list_cases(limit: int = 100) -> str:
             return (ts, cid)
         cases.sort(key=_k, reverse=True)
         cases = cases[:limit]
-        return json.dumps({"count": len(cases), "cases": cases})
+        return json.dumps({"count": len(cases), "cases": cases, "total_seen": len(result or [])})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -5147,7 +5149,7 @@ def get_last_logins(count: int = 5, n: int = 0, N: int = 0, num_events: int = 0,
 
 @app_mcp.tool()
 def get_last_cases(count: int = 5, n: int = 0, N: int = 0, num_cases: int = 0, limit: int = 0, number_of_cases: int = 0) -> str:
-    """Get the last N SOAR cases. Use for: 'last 5 cases', 'last 10 cases'."""
+    """Get the last N SOAR cases (newest first). Use for: 'last 5 cases', 'last 10 cases'."""
     for val in [n, N, num_cases, limit, number_of_cases]:
         if val > 0:
             count = val
@@ -5159,10 +5161,12 @@ def get_last_cases(count: int = 5, n: int = 0, N: int = 0, num_cases: int = 0, l
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        # Pull a larger page and sort locally. The v1beta API ignores
-        # orderBy=createTime desc on this tenant, so we sort client-side
-        # to guarantee the most recent case IDs come back first.
-        result = chronicle.list_cases(page_size=max(count * 4, 200), as_list=True)
+        # The v1beta /cases endpoint ignores orderBy on this tenant and
+        # returns an ascending slice when we ask for one page, so we auto-
+        # paginate through ALL cases (as_list with no page_size triggers
+        # SDK-level pagination), then sort newest-first by createTime and
+        # numeric case ID.
+        result = chronicle.list_cases(as_list=True)
         cases = result if isinstance(result, list) else []
         def _case_sort_key(c):
             ts = c.get("createTime") or c.get("updateTime") or ""
@@ -5173,7 +5177,7 @@ def get_last_cases(count: int = 5, n: int = 0, N: int = 0, num_cases: int = 0, l
             return (ts, cid)
         cases.sort(key=_case_sort_key, reverse=True)
         cases = cases[:count]
-        return json.dumps({"count": len(cases), "cases": cases})
+        return json.dumps({"count": len(cases), "cases": cases, "total_seen": len(result or [])})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
