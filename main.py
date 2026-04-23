@@ -1802,18 +1802,20 @@ def search_threat_actors(query: str = "", actor_query: str = "", threat_actor_qu
                     "count": len(matched_iocs[:limit])
                 })
 
-            # No observed IOCs in tenant UDM; pull the Mandiant actor catalog
-            # directly from GTI v3 collections. This returns indicators
-            # attributed to the actor regardless of whether the tenant saw
-            # them, which is what 'hunt APT28' actually means.
+            # No observed IOCs in tenant UDM; pull the Mandiant catalog
+            # directly from GTI v3 collections across every collection type
+            # (threat-actor, vulnerability, malware-family, campaign,
+            # report, software-toolkit). A query like "RedSun" is a vuln,
+            # "APT28" is an actor, "BASTA" is malware — we don't know which
+            # up-front, so search all and return whatever matches.
             if GTI_API_KEY:
                 try:
                     gti_search = requests.get(
                         "https://www.virustotal.com/api/v3/collections",
                         headers={"x-apikey": GTI_API_KEY},
                         params={
-                            "filter": f'collection_type:"threat-actor" name:"{final_query}"',
-                            "limit": 5,
+                            "filter": f'name:"{final_query}"',
+                            "limit": 10,
                         },
                         timeout=20,
                     )
@@ -1823,12 +1825,15 @@ def search_threat_actors(query: str = "", actor_query: str = "", threat_actor_qu
                             attrs = col.get("attributes") or {}
                             actor_collections.append({
                                 "id": col.get("id"),
+                                "collection_type": attrs.get("collection_type"),
                                 "name": attrs.get("name"),
                                 "aliases": attrs.get("alt_names", []),
                                 "description": (attrs.get("description") or "")[:400],
                                 "motivations": attrs.get("motivations", []),
                                 "targeted_regions": attrs.get("targeted_regions", []),
                                 "targeted_industries": attrs.get("targeted_industries", []),
+                                "cve_id": attrs.get("cve", {}).get("id") if isinstance(attrs.get("cve"), dict) else attrs.get("cve_id"),
+                                "cvss_score": attrs.get("cvss", {}).get("base_score") if isinstance(attrs.get("cvss"), dict) else attrs.get("cvss_score"),
                                 "last_seen": attrs.get("last_seen"),
                                 "first_seen": attrs.get("first_seen"),
                             })
@@ -1864,11 +1869,16 @@ def search_threat_actors(query: str = "", actor_query: str = "", threat_actor_qu
                         sample_domains = [i.get("id") for i in actor_iocs["domains"][:5] if i.get("id")]
                         sample_ips = [i.get("id") for i in actor_iocs["ip_addresses"][:5] if i.get("id")]
                         sample_urls = [i.get("id", "")[:80] for i in actor_iocs["urls"][:3] if i.get("id")]
+                        col_type = top.get("collection_type") or "unknown"
                         lines = [
-                            f"Mandiant GTI profile: {top.get('name', final_query)}",
+                            f"Mandiant GTI ({col_type}): {top.get('name', final_query)}",
                         ]
+                        if top.get("cve_id"):
+                            lines.append(f"  CVE: {top['cve_id']}" + (f" (CVSS {top.get('cvss_score')})" if top.get('cvss_score') else ""))
                         if top.get("aliases"):
                             lines.append(f"  Aliases: {', '.join(top['aliases'][:6])}")
+                        if top.get("description"):
+                            lines.append(f"  Description: {top['description'][:300]}")
                         if top.get("motivations"):
                             lines.append(f"  Motivations: {', '.join(top['motivations'][:5])}")
                         if top.get("targeted_regions"):
