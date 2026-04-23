@@ -465,7 +465,7 @@ def translate_nl_to_udm_query(natural_language: str) -> str:
     try:
         token = get_adc_token()
         gemini_url = (
-            f"https://us-central1-aiplatform.googleapis.com/v1/"
+            f"https://us-central1-aiplatform.googleapis.com/v1beta1/"
             f"projects/{SECOPS_PROJECT_ID}/locations/us-central1/"
             f"publishers/google/models/{GEMINI_MODEL}:generateContent"
         )
@@ -1457,7 +1457,7 @@ def search_security_events(text: str = "", query: str = "", hours_back: float = 
         # Step 1: Use Gemini to translate natural language to UDM query
         token = get_adc_token()
         gemini_url = (
-            f"https://us-central1-aiplatform.googleapis.com/v1/"
+            f"https://us-central1-aiplatform.googleapis.com/v1beta1/"
             f"projects/{SECOPS_PROJECT_ID}/locations/us-central1/"
             f"publishers/google/models/{GEMINI_MODEL}:generateContent"
         )
@@ -3615,7 +3615,7 @@ def autonomous_investigate(
         try:
             token = get_adc_token()
             gemini_url = (
-                f"https://us-central1-aiplatform.googleapis.com/v1/"
+                f"https://us-central1-aiplatform.googleapis.com/v1beta1/"
                 f"projects/{SECOPS_PROJECT_ID}/locations/us-central1/"
                 f"publishers/google/models/{GEMINI_MODEL}:generateContent"
             )
@@ -4623,7 +4623,7 @@ async def api_chat(request: StarletteRequest):
             })
 
         gemini_url = (
-            f"https://us-central1-aiplatform.googleapis.com/v1/"
+            f"https://us-central1-aiplatform.googleapis.com/v1beta1/"
             f"projects/{SECOPS_PROJECT_ID}/locations/us-central1/"
             f"publishers/google/models/{GEMINI_MODEL}:generateContent"
         )
