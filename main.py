@@ -282,6 +282,21 @@ AZURE_AD_CLIENT_ID = os.getenv("AZURE_AD_CLIENT_ID", "")
 CS_CLIENT_ID = os.getenv("CROWDSTRIKE_CLIENT_ID", "")
 CS_BASE_URL = os.getenv("CROWDSTRIKE_BASE_URL", "https://api.crowdstrike.com")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_LOCATION = os.getenv("GEMINI_LOCATION", "us-central1")
+
+
+def _gemini_url() -> str:
+    """Build the Vertex AI generateContent URL. Preview Gemini models
+    (gemini-3.1-pro-preview etc.) are only served from the 'global'
+    location via aiplatform.googleapis.com (no regional prefix)."""
+    if GEMINI_LOCATION == "global":
+        host = "aiplatform.googleapis.com"
+    else:
+        host = f"{GEMINI_LOCATION}-aiplatform.googleapis.com"
+    return (
+        f"https://{host}/v1beta1/projects/{SECOPS_PROJECT_ID}"
+        f"/locations/{GEMINI_LOCATION}/publishers/google/models/{GEMINI_MODEL}:generateContent"
+    )
 
 # Sensitive config — resolved through Secret Manager when the env value is an
 # sm:// reference. Plaintext values still work for local dev.
@@ -465,9 +480,7 @@ def translate_nl_to_udm_query(natural_language: str) -> str:
     try:
         token = get_adc_token()
         gemini_url = (
-            f"https://us-central1-aiplatform.googleapis.com/v1beta1/"
-            f"projects/{SECOPS_PROJECT_ID}/locations/us-central1/"
-            f"publishers/google/models/{GEMINI_MODEL}:generateContent"
+            _gemini_url()
         )
         prompt = (
             "You are a Google SecOps UDM query expert. Convert the following natural language "
@@ -1457,9 +1470,7 @@ def search_security_events(text: str = "", query: str = "", hours_back: float = 
         # Step 1: Use Gemini to translate natural language to UDM query
         token = get_adc_token()
         gemini_url = (
-            f"https://us-central1-aiplatform.googleapis.com/v1beta1/"
-            f"projects/{SECOPS_PROJECT_ID}/locations/us-central1/"
-            f"publishers/google/models/{GEMINI_MODEL}:generateContent"
+            _gemini_url()
         )
         translate_prompt = (
             "You are a Google SecOps UDM query expert. Convert the following natural language "
@@ -3615,9 +3626,7 @@ def autonomous_investigate(
         try:
             token = get_adc_token()
             gemini_url = (
-                f"https://us-central1-aiplatform.googleapis.com/v1beta1/"
-                f"projects/{SECOPS_PROJECT_ID}/locations/us-central1/"
-                f"publishers/google/models/{GEMINI_MODEL}:generateContent"
+                _gemini_url()
             )
             
             report_prompt = f"""You are a senior security analyst generating a formal investigation report for the SOC.
@@ -4623,9 +4632,7 @@ async def api_chat(request: StarletteRequest):
             })
 
         gemini_url = (
-            f"https://us-central1-aiplatform.googleapis.com/v1beta1/"
-            f"projects/{SECOPS_PROJECT_ID}/locations/us-central1/"
-            f"publishers/google/models/{GEMINI_MODEL}:generateContent"
+            _gemini_url()
         )
         system_instruction = {
             "parts": [{"text": (
