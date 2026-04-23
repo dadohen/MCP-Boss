@@ -15,6 +15,21 @@ echo "Building image: $IMAGE"
 gcloud builds submit --tag "$IMAGE" --project "$SECOPS_PROJECT_ID" --quiet
 
 echo "Deploying $SERVICE to Cloud Run in $REGION..."
+# Auto-compute the version string: 4.0.<patches> where <patches> is the
+# number of commits since 06da7d7 (the 4.0.0 bump). Appends -dirty if the
+# working tree has uncommitted changes, so a local hot-deploy is obvious
+# in /health.
+BASE_COMMIT="06da7d7"
+if git rev-parse "$BASE_COMMIT" >/dev/null 2>&1; then
+  PATCH=$(git rev-list --count "${BASE_COMMIT}..HEAD" 2>/dev/null || echo 0)
+else
+  PATCH=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+fi
+DIRTY=""
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then DIRTY="-dirty"; fi
+VERSION="4.0.${PATCH}${DIRTY}"
+echo "Setting VERSION=${VERSION}"
+
 gcloud run deploy "$SERVICE" \
     --image "$IMAGE" \
     --region "$REGION" \
@@ -22,7 +37,7 @@ gcloud run deploy "$SERVICE" \
     --allow-unauthenticated \
     --memory 512Mi \
     --timeout 120 \
-    --update-env-vars "SECOPS_PROJECT_ID=${SECOPS_PROJECT_ID},SECOPS_CUSTOMER_ID=${SECOPS_CUSTOMER_ID},SECOPS_REGION=${SECOPS_REGION}" \
+    --update-env-vars "SECOPS_PROJECT_ID=${SECOPS_PROJECT_ID},SECOPS_CUSTOMER_ID=${SECOPS_CUSTOMER_ID},SECOPS_REGION=${SECOPS_REGION},VERSION=${VERSION}" \
     --quiet
 
 if [ -d .git ] && [ "${GIT_PUSH:-1}" = "1" ]; then

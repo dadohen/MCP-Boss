@@ -4254,7 +4254,7 @@ async def health_check(request: StarletteRequest):
     health = {
         "status": "healthy",
         "server": "google-native-mcp",
-        "version": "4.0.0",
+        "version": os.getenv("VERSION", "4.0.0-dev"),
         "tools": len(list(app_mcp._tool_manager.list_tools())),
         "project": SECOPS_PROJECT_ID,
         "region": SECOPS_REGION,
