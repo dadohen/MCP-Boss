@@ -624,6 +624,18 @@
                 <button class="quick-btn danger" onclick="q('list GCP service accounts with user-managed keys')"><span class="qicon">⚠️</span>SA Key Audit</button>
             </div>
 
+            <!-- Approvals -->
+            <div class="sidebar-section">
+                <div class="sidebar-label" style="display:flex;justify-content:space-between;align-items:center">
+                    <span>Pending Approvals <span id="approvals-badge" style="display:none;background:var(--red-dim,#ef4444);color:#fff;border-radius:8px;padding:1px 6px;font-size:9px;margin-left:4px">0</span></span>
+                    <button onclick="loadApprovals()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px" title="Refresh">↻</button>
+                </div>
+                <div id="approvals-list" style="font-size:11px;color:var(--text-muted);padding:4px 8px">Loading…</div>
+                <div style="margin-top:6px;text-align:center">
+                    <a href="#" onclick="verifyAuditChain();return false" style="font-size:10px;color:var(--text-muted);text-decoration:none">Verify audit chain ↗</a>
+                </div>
+            </div>
+
             <!-- Stats -->
             <div class="sidebar-section">
                 <div class="sidebar-label">Server Status</div>
@@ -936,6 +948,7 @@ async function init() {
         });
 
         showWelcome(health);
+        loadApprovals();
     } catch(e) {
         document.getElementById('conn-status').innerHTML = '<div class="dot" style="background:var(--red)"></div><span style="color:var(--red-dim)">Offline</span>';
         addMsg('error', 'Failed to connect: ' + e.message);
@@ -1043,6 +1056,83 @@ function resetBtn() {
 function q(text) { input.value = text; sendMessage(); }
 function insertCommand(text) { input.value = text; input.focus(); }
 function clearChat() { chat.innerHTML = ''; }
+
+// ── Approvals ──
+const _esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+async function loadApprovals() {
+    const list = document.getElementById('approvals-list');
+    const badge = document.getElementById('approvals-badge');
+    if (!list) return;
+    try {
+        const resp = await fetch('/api/approvals?state=pending', {headers: getAuthHeaders()});
+        if (!resp.ok) { list.textContent = `error ${resp.status}`; return; }
+        const data = await resp.json();
+        const items = data.approvals || [];
+        if (badge) {
+            badge.textContent = String(items.length);
+            badge.style.display = items.length ? 'inline-block' : 'none';
+        }
+        if (!items.length) {
+            list.innerHTML = '<div style="font-size:10px;color:var(--text-muted);padding:4px 0">No pending approvals.</div>';
+            return;
+        }
+        list.innerHTML = items.map(a => {
+            const tc = a.tool_call || {};
+            const id = a.id || a.approval_id || '';
+            const tool = _esc(tc.tool_name || '?');
+            const args = _esc(JSON.stringify(tc.args || {}).slice(0, 100));
+            const groups = (a.policy_decision && a.policy_decision.approver_groups || []).join(', ');
+            return `<div style="border:1px solid var(--border,#333);border-radius:4px;padding:6px;margin-bottom:4px;background:rgba(255,255,255,.02)">
+                <div style="font-family:monospace;font-size:11px;color:var(--green,#4ade80);font-weight:600">${tool}</div>
+                <div style="font-family:monospace;font-size:10px;color:var(--text-muted,#888);margin-top:2px;word-break:break-all">${args}</div>
+                <div style="font-size:9px;color:var(--text-muted,#888);margin-top:2px">approver: ${_esc(groups || 'any')}</div>
+                <div style="margin-top:6px;display:flex;gap:4px">
+                    <button onclick="decideApproval('${_esc(id)}','approve')" style="flex:1;background:rgba(0,255,136,.08);border:1px solid var(--green,#4ade80);color:var(--green,#4ade80);border-radius:3px;padding:3px;font-size:10px;cursor:pointer">Approve</button>
+                    <button onclick="decideApproval('${_esc(id)}','deny')" style="flex:1;background:rgba(239,68,68,.08);border:1px solid var(--red-dim,#ef4444);color:var(--red-dim,#ef4444);border-radius:3px;padding:3px;font-size:10px;cursor:pointer">Deny</button>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        list.textContent = 'load failed: ' + e.message;
+    }
+}
+
+async function decideApproval(id, decision) {
+    if (!confirm(`${decision === 'approve' ? 'Approve' : 'Deny'} approval ${id}?`)) return;
+    try {
+        const resp = await fetch(`/api/approvals/${encodeURIComponent(id)}/decide`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', ...getAuthHeaders()},
+            body: JSON.stringify({decision: decision}),
+        });
+        const data = await resp.json();
+        if (!resp.ok) { alert(`HTTP ${resp.status}: ${data.error || data.detail || ''}`); return; }
+        loadApprovals();
+        if (data.executed_result) {
+            chat.insertAdjacentHTML('beforeend',
+                `<div class="msg bot">✅ Approval ${decision}d. Executed result:\n${_esc(JSON.stringify(data.executed_result, null, 2))}</div>`);
+        }
+    } catch (e) {
+        alert('decide failed: ' + e.message);
+    }
+}
+
+async function verifyAuditChain() {
+    try {
+        const resp = await fetch('/api/audit/verify', {headers: getAuthHeaders()});
+        const data = await resp.json();
+        const ok = data.chain_intact;
+        chat.insertAdjacentHTML('beforeend',
+            `<div class="msg bot">${ok ? '✅' : '❌'} Audit chain ${ok ? 'intact' : 'BROKEN at seq ' + data.broken_at_seq}. Path: <code>${_esc(data.audit_path)}</code></div>`);
+        chat.scrollTop = chat.scrollHeight;
+    } catch (e) {
+        alert('audit verify failed: ' + e.message);
+    }
+}
+
+// Refresh approvals on init and every 30s.
+setInterval(() => { if (authToken || !document.getElementById('login-overlay').style.display === 'flex') loadApprovals(); }, 30000);
 
 // ── Keys ──
 input.addEventListener('keydown', e => {

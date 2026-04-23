@@ -162,13 +162,15 @@ h1{{color:{color};}} pre{{background:#1e293b;padding:16px;border-radius:8px;over
         Route("/api/audit/verify", endpoint=verify_audit, methods=["GET"]),
     ]
 
-    # Insert these before the static-file Mount("/") catch-all so they take priority.
+    # Insert before the static-file catch-all Mount so the new routes take
+    # priority. Starlette normalises Mount("/") to path="" — match by class +
+    # empty/'/'  path so the lookup actually finds it.
     existing = list(app.routes)
     static_mount_idx = next(
         (
             i
             for i, r in enumerate(existing)
-            if getattr(r, "path", None) == "/" and r.__class__.__name__ == "Mount"
+            if r.__class__.__name__ == "Mount" and getattr(r, "path", "") in ("", "/")
         ),
         len(existing),
     )
