@@ -4447,6 +4447,17 @@ def normalize_tool_parameters(tool_name: str, args: dict) -> dict:
     if not args:
         return args
 
+    # gemini-3.1-pro-preview sometimes emits arg keys wrapped in literal double
+    # quotes, e.g. {'"count"': 1} instead of {'count': 1}. Strip those so
+    # the downstream dispatch matches the function signature.
+    stripped = {}
+    for k, v in args.items():
+        if isinstance(k, str) and len(k) >= 2 and k[0] == '"' and k[-1] == '"':
+            stripped[k[1:-1]] = v
+        else:
+            stripped[k] = v
+    args = stripped
+
     # Get the actual tool function's parameter names
     tool_obj = app_mcp._tool_manager._tools.get(tool_name)
     if not tool_obj:
