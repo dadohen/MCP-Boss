@@ -609,19 +609,45 @@ def query_cloud_logging(project_id: str = "", filter_string: str = "", query: st
 
 
 @app_mcp.tool()
-def search_secops_udm(query: str = "", udm_query: str = "", hours_back: float = 24.0, max_events: int = 100, start_time: str = "", end_time: str = "", time_range: str = "", limit: int = 0, count: int = 0, minutes_back: float = 0.0) -> str:
-    """[SECOPS CHRONICLE] Direct raw log/UDM queries. Advanced threat hunting with Chronicle metadata. Use this when asked for 'logs'."""
+def search_secops_udm(query: str = "", udm_query: str = "", hours_back: float = 24.0, max_events: int = 100, start_time: str = "", end_time: str = "", time_range: str = "", days_back: float = 0.0, limit: int = 0, count: int = 0, minutes_back: float = 0.0) -> str:
+    """Raw UDM search in Chronicle. Use this for 'hunt for X', 'search logs', 'find events matching Y'.
+
+    query: a UDM field expression, e.g.
+        'metadata.event_type = "NETWORK_CONNECTION" AND principal.ip = "1.2.3.4"'
+        'principal.user.userid = "alice@corp.local"'
+        'network.dns.questions.name = "malicious.example.com"'
+    To look for a threat actor by NAME (APT28, Lazarus, etc.) use
+    search_threat_actors instead — UDM does not index actor names directly.
+
+    Time range: pass hours_back (default 24), days_back, or minutes_back as
+    NUMBERS. Do NOT pass strings like '7d' or 'last 7 days'; use
+    days_back=7 or hours_back=168. start_time/end_time accept ISO 8601.
+    """
     try:
         final_query = query or udm_query
         if not final_query or len(final_query.strip()) < 5:
-            return json.dumps({"error": "Query too short"})
+            return json.dumps({"error": "Query too short. Example: 'metadata.event_type = \"NETWORK_CONNECTION\" AND principal.ip = \"1.2.3.4\"'"})
         # Accept limit/count as aliases for max_events
         if limit > 0:
             max_events = limit
         elif count > 0:
             max_events = count
         max_events = min(max(1, max_events), 10000)
-        
+
+        # Friendly relative-time: accept days_back and 'time_range' strings
+        if days_back and days_back > 0:
+            hours_back = float(days_back) * 24.0
+        if time_range and not (start_time or end_time):
+            m = re.match(r"\s*(\d+)\s*([dhm])", str(time_range).lower())
+            if m:
+                n, unit = int(m.group(1)), m.group(2)
+                if unit == "d":
+                    hours_back = n * 24.0
+                elif unit == "h":
+                    hours_back = float(n)
+                elif unit == "m":
+                    minutes_back = float(n)
+
         # Parse time range
         start_iso, end_iso = parse_time_range(hours_back, start_time, end_time, minutes_back)
         start_dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
@@ -1683,12 +1709,24 @@ def get_ip_report(ip_address: str = "", ip: str = "", address: str = "", host: s
 
 
 @app_mcp.tool()
-def search_threat_actors(query: str = "", actor_query: str = "", threat_actor_query: str = "", limit: int = 10, days_back: int = 90) -> str:
-    """Search for threat actor profiles and IOCs in Google Threat Intelligence (Mandiant/SecOps). Returns matching IOCs with Mandiant attribution, threat actor associations, and indicators."""
+def search_threat_actors(query: str = "", actor_query: str = "", threat_actor_query: str = "", name: str = "", actor: str = "", limit: int = 10, days_back: int = 90) -> str:
+    """Hunt a named threat actor (APT28, APT29, Lazarus, Kimsuky, Fancy Bear, etc.) across your SecOps tenant.
+
+    query: the threat actor name or alias. Examples:
+        query="APT28"
+        query="Fancy Bear"
+        query="Lazarus"
+    Alias params (name/actor/actor_query/threat_actor_query) all work as
+    synonyms for query.
+
+    Returns IOCs Mandiant attributes to the actor, matches observed in your
+    SecOps UDM within days_back (default 90), and the alias set expanded
+    automatically (e.g. APT28 -> Fancy Bear / STRONTIUM / SOFACY).
+    """
     try:
-        final_query = query or actor_query or threat_actor_query
+        final_query = query or actor_query or threat_actor_query or name or actor
         if not final_query or len(final_query.strip()) < 2:
-            return json.dumps({"error": "Query too short"})
+            return json.dumps({"error": "Provide a threat actor name via query=, e.g. query='APT28'"})
         limit = min(max(1, limit), 200)
         days_back = min(max(1, days_back), 365)
 
