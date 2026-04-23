@@ -1802,7 +1802,73 @@ def search_threat_actors(query: str = "", actor_query: str = "", threat_actor_qu
                     "count": len(matched_iocs[:limit])
                 })
 
-            # If no specific matches, return all IOCs with Mandiant attribution as context
+            # No observed IOCs in tenant UDM; pull the Mandiant actor catalog
+            # directly from GTI v3 collections. This returns indicators
+            # attributed to the actor regardless of whether the tenant saw
+            # them, which is what 'hunt APT28' actually means.
+            if GTI_API_KEY:
+                try:
+                    gti_search = requests.get(
+                        "https://www.virustotal.com/api/v3/collections",
+                        headers={"x-apikey": GTI_API_KEY},
+                        params={
+                            "filter": f'collection_type:"threat-actor" name:"{final_query}"',
+                            "limit": 5,
+                        },
+                        timeout=20,
+                    )
+                    actor_collections = []
+                    if gti_search.status_code == 200:
+                        for col in (gti_search.json().get("data") or []):
+                            attrs = col.get("attributes") or {}
+                            actor_collections.append({
+                                "id": col.get("id"),
+                                "name": attrs.get("name"),
+                                "aliases": attrs.get("alt_names", []),
+                                "description": (attrs.get("description") or "")[:400],
+                                "motivations": attrs.get("motivations", []),
+                                "targeted_regions": attrs.get("targeted_regions", []),
+                                "targeted_industries": attrs.get("targeted_industries", []),
+                                "last_seen": attrs.get("last_seen"),
+                                "first_seen": attrs.get("first_seen"),
+                            })
+                    # Pull IOCs (files, domains, IPs, URLs) for the top match.
+                    actor_iocs = {"files": [], "domains": [], "ip_addresses": [], "urls": []}
+                    if actor_collections:
+                        top_id = actor_collections[0]["id"]
+                        for rel, label in [
+                            ("files", "files"),
+                            ("domains", "domains"),
+                            ("ip_addresses", "ip_addresses"),
+                            ("urls", "urls"),
+                        ]:
+                            r = requests.get(
+                                f"https://www.virustotal.com/api/v3/collections/{top_id}/relationships/{rel}",
+                                headers={"x-apikey": GTI_API_KEY},
+                                params={"limit": min(limit, 40)},
+                                timeout=20,
+                            )
+                            if r.status_code == 200:
+                                for item in (r.json().get("data") or [])[:limit]:
+                                    actor_iocs[label].append({
+                                        "id": item.get("id"),
+                                        "type": item.get("type"),
+                                        "attributes": {k: v for k, v in (item.get("attributes") or {}).items() if k in ("reputation", "last_analysis_stats", "tags", "meaningful_name", "names", "last_modification_date")},
+                                    })
+                    if actor_collections or any(actor_iocs.values()):
+                        return json.dumps({
+                            "source": "Mandiant GTI (collections)",
+                            "query": final_query,
+                            "aliases": list(query_aliases),
+                            "actor_profile": actor_collections[:1],
+                            "indicators": actor_iocs,
+                            "note": "Indicators fetched from the Mandiant actor catalog. Cross-reference with UDM via search_secops_udm to see if any were observed in-tenant.",
+                            "tenant_observed_count": 0,
+                        })
+                except Exception as gti_exc:
+                    logger.warning(f"GTI actor fallback failed: {gti_exc}")
+
+            # Last resort: return all IOCs with Mandiant attribution as context
             all_iocs = []
             for ioc in (matches if isinstance(matches, list) else [])[:limit]:
                 all_iocs.append(ioc)
