@@ -1944,8 +1944,17 @@ def list_cases() -> str:
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        result = chronicle.list_cases(page_size=100, order_by="createTime desc", as_list=True)
+        result = chronicle.list_cases(page_size=500, as_list=True)
         cases = result if isinstance(result, list) else result.get('cases', []) if isinstance(result, dict) else []
+        # Sort newest-first locally; the API's orderBy is ignored on this tenant.
+        def _k(c):
+            ts = c.get("createTime") or c.get("updateTime") or ""
+            try:
+                cid = int((c.get("name", "").rsplit("/", 1)[-1]) or 0)
+            except Exception:
+                cid = 0
+            return (ts, cid)
+        cases.sort(key=_k, reverse=True)
         formatted = []
         for c in cases:
             c_dict = c if isinstance(c, dict) else {}
@@ -3698,13 +3707,24 @@ def _call_mcp_server(mcp_url: str, tool_name: str, arguments: dict) -> str:
 
 @app_mcp.tool()
 def secops_list_cases(limit: int = 100) -> str:
-    """List all SOAR cases. Returns case IDs, titles, and statuses."""
+    """List all SOAR cases, newest first. Returns case IDs, titles, and statuses."""
     try:
         limit = min(max(1, limit), 1000)
         client = SecOpsClient()
         chronicle = client.chronicle(customer_id=SECOPS_CUSTOMER_ID, project_id=SECOPS_PROJECT_ID, region=SECOPS_REGION)
-        result = chronicle.list_cases(page_size=limit)
-        cases = result.get('cases', []) if isinstance(result, dict) else result
+        # Pull at least 500 so local sort picks the truly newest cases.
+        fetch_size = max(limit, 500)
+        result = chronicle.list_cases(page_size=fetch_size, as_list=True)
+        cases = result if isinstance(result, list) else (result.get('cases', []) if isinstance(result, dict) else [])
+        def _k(c):
+            ts = c.get("createTime") or c.get("updateTime") or ""
+            try:
+                cid = int((c.get("name", "").rsplit("/", 1)[-1]) or 0)
+            except Exception:
+                cid = 0
+            return (ts, cid)
+        cases.sort(key=_k, reverse=True)
+        cases = cases[:limit]
         return json.dumps({"count": len(cases), "cases": cases})
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -4485,6 +4505,31 @@ async def api_chat(request: StarletteRequest):
             if candidate.get("finishReason") in ["SAFETY", "RECITATION", "OTHER"]:
                 return JSONResponse({"error": f"Gemini Generation Stopped: {candidate.get('finishReason')}"})
 
+            if candidate.get("finishReason") == "MALFORMED_FUNCTION_CALL":
+                # Gemini tried to emit a function call that didn't match any
+                # declared schema. Nudge it with the error and let it retry
+                # on the next turn. If this happens twice in a row, bail out
+                # with a text answer based on whatever we have so far.
+                prior_malformed = sum(1 for c in contents[-4:] if isinstance(c, dict) and c.get("role") == "user" and any(
+                    isinstance(p, dict) and p.get("text", "").startswith("[retry]") for p in (c.get("parts") or [])
+                ))
+                if prior_malformed >= 1:
+                    fallback = "Gemini kept producing malformed function calls on this turn. Partial tool results so far: " + json.dumps(all_tool_results)[:2000]
+                    session_store.append_history(session_id, "user", user_msg, principal=principal)
+                    session_store.append_history(session_id, "model", fallback, principal=principal)
+                    return JSONResponse({
+                        "response": fallback,
+                        "tools_called": tools_called,
+                        "tool_results": all_tool_results,
+                        "turns_used": turn + 1,
+                        "session_id": session_id,
+                    })
+                contents.append({
+                    "role": "user",
+                    "parts": [{"text": "[retry] Your last function call was malformed (argument shape did not match the tool schema). Re-plan using a different tool or simpler arguments. If you were trying to hunt a threat actor, call autonomous_investigate(trigger=\"<actor name>\", trigger_type=\"description\") and let it orchestrate the chain."}],
+                })
+                continue
+
             content_resp = candidate.get("content", {})
             parts = content_resp.get("parts", [])
 
@@ -5114,9 +5159,19 @@ def get_last_cases(count: int = 5, n: int = 0, N: int = 0, num_cases: int = 0, l
             project_id=SECOPS_PROJECT_ID,
             region=SECOPS_REGION
         )
-        # Delegate ordering to the API instead of sorting locally
-        result = chronicle.list_cases(page_size=count, order_by="createTime desc", as_list=True)
+        # Pull a larger page and sort locally. The v1beta API ignores
+        # orderBy=createTime desc on this tenant, so we sort client-side
+        # to guarantee the most recent case IDs come back first.
+        result = chronicle.list_cases(page_size=max(count * 4, 200), as_list=True)
         cases = result if isinstance(result, list) else []
+        def _case_sort_key(c):
+            ts = c.get("createTime") or c.get("updateTime") or ""
+            try:
+                cid = int((c.get("name", "").rsplit("/", 1)[-1]) or 0)
+            except Exception:
+                cid = 0
+            return (ts, cid)
+        cases.sort(key=_case_sort_key, reverse=True)
         cases = cases[:count]
         return json.dumps({"count": len(cases), "cases": cases})
     except Exception as e:
