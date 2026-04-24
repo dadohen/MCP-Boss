@@ -1,6 +1,6 @@
 #!/bin/bash
 # One-command build + deploy + push for MCP Boss.
-# Project-agnostic — reads SECOPS_PROJECT_ID from env.
+# Project-agnostic -- reads SECOPS_PROJECT_ID from env.
 set -euo pipefail
 
 : "${SECOPS_PROJECT_ID:?Set SECOPS_PROJECT_ID (target GCP project ID)}"
@@ -34,7 +34,7 @@ gcloud run deploy "$SERVICE" \
     --image "$IMAGE" \
     --region "$REGION" \
     --project "$SECOPS_PROJECT_ID" \
-    --allow-unauthenticated \
+    --no-allow-unauthenticated \
     --memory 512Mi \
     --timeout 120 \
     --update-env-vars "SECOPS_PROJECT_ID=${SECOPS_PROJECT_ID},SECOPS_CUSTOMER_ID=${SECOPS_CUSTOMER_ID},SECOPS_REGION=${SECOPS_REGION},VERSION=${VERSION}" \
@@ -43,8 +43,8 @@ gcloud run deploy "$SERVICE" \
 if [ -d .git ] && [ "${GIT_PUSH:-1}" = "1" ]; then
   echo "Committing and pushing..."
   git add -A
-  git commit -m "Deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ) — $(grep -c '@app_mcp.tool' main.py) tools" 2>/dev/null || echo "Nothing to commit"
-  git push 2>/dev/null || echo "Push skipped — check git auth"
+  git commit -m "Deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ) -- $(grep -c '@app_mcp.tool' main.py) tools" 2>/dev/null || echo "Nothing to commit"
+  git push 2>/dev/null || echo "Push skipped -- check git auth"
 fi
 
 URL=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$SECOPS_PROJECT_ID" --format='value(status.url)')
